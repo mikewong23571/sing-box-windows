@@ -11,6 +11,7 @@ pub mod embedded;
 pub mod event;
 pub mod guard;
 pub mod import;
+pub mod log_rotation;
 pub mod orchestrator;
 pub mod runtime;
 pub mod state;

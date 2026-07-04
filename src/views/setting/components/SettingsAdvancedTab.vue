@@ -295,6 +295,7 @@
             />
           </n-form-item>
         </div>
+        <div class="setting-hint">{{ extraLabels.logRetentionHint }}</div>
       </div>
     </transition>
   </div>
@@ -373,6 +374,9 @@ const extraLabels = computed(() => {
     latencyUrl: zh ? '测速 URL' : 'Latency URL',
     logRetentionPrefs: zh ? '日志保留' : 'Log Retention',
     logMaxRows: zh ? '最大日志条数' : 'Maximum log rows',
+    logRetentionHint: zh
+      ? '仅控制前端界面展示的日志条数；磁盘上的 sing-box.log 由内核启动时自动滚动（超过 10MB 保留最近 3 份）。'
+      : 'Controls only the number of log rows shown in the UI. The on-disk sing-box.log is rotated automatically on kernel start (kept to last 3 files after 10MB).',
   }
 })
 
@@ -442,6 +446,13 @@ const proxyDisplayOptions = computed(() => {
 
 .form-section-title:first-child {
   margin-top: 8px;
+}
+
+.setting-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  margin: 4px 0 0;
 }
 
 .collapse-enter-active,

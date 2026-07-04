@@ -307,6 +307,14 @@ pub async fn start_kernel_with_state(
         warn!("更新DNS策略失败: {}", e);
     }
 
+    // 启动内核前检查磁盘日志大小，超过阈值则滚动，避免 sing-box.log 无限增长。
+    {
+        let log_path = std::path::PathBuf::from(
+            crate::app::singbox::common::kernel_log_output_path(),
+        );
+        crate::app::core::kernel_service::log_rotation::rotate_if_needed(&log_path);
+    }
+
     if PROCESS_MANAGER.is_running().await {
         KERNEL_STATE.mark_running(resolved.api_port);
         KERNEL_STATE.update_readiness(|readiness| {
