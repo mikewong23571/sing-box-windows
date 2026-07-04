@@ -175,6 +175,21 @@ impl EnhancedStorageService {
         self.database.save_app_config(config).await
     }
 
+    // 通用 KV 配置（custom_rules 等结构化数据复用此通道，避免新表/迁移）
+    pub async fn load_generic_config<T>(&self, key: &str) -> StorageResult<Option<T>>
+    where
+        T: for<'de> serde::Deserialize<'de>,
+    {
+        self.database.load_config(key).await
+    }
+
+    pub async fn save_generic_config<T>(&self, key: &str, value: &T) -> StorageResult<()>
+    where
+        T: serde::Serialize,
+    {
+        self.database.save_config(key, value).await
+    }
+
     // 主题配置
     pub async fn get_theme_config(&self) -> StorageResult<ThemeConfig> {
         match self.database.load_theme_config().await? {

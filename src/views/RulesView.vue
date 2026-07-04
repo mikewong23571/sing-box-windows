@@ -18,6 +18,17 @@
           >
             {{ providerLabels.updateAll }}
           </n-button>
+          <n-button
+            v-if="activeTab === 'custom'"
+            type="primary"
+            secondary
+            @click="openCreateCustomRule"
+          >
+            <template #icon>
+              <n-icon><AddOutline /></n-icon>
+            </template>
+            {{ customLabels.add }}
+          </n-button>
         </n-space>
       </template>
     </PageHeader>
@@ -26,6 +37,7 @@
       <n-tabs v-model:value="activeTab" type="segment" size="small">
         <n-tab-pane name="rules" :tab="providerLabels.rulesTab" />
         <n-tab-pane name="providers" :tab="providerLabels.providersTab" />
+        <n-tab-pane name="custom" :tab="customLabels.tab" />
       </n-tabs>
 
       <div class="toolbar-row">
@@ -119,17 +131,110 @@
         <h3 class="empty-title">{{ providerLabels.noProviders }}</h3>
       </div>
     </div>
+
+    <div v-if="activeTab === 'custom'" class="card-list">
+      <div class="custom-hint">{{ customLabels.hint }}</div>
+      <div v-if="rulesStore.customRules.length" class="rules-grid">
+        <div v-for="rule in rulesStore.customRules" :key="rule.id" class="rule-card">
+          <div class="rule-head">
+            <div class="rule-meta">
+              <n-tag round size="small" :bordered="false">{{ matchTypeLabel(rule.match_type) }}</n-tag>
+              <n-tag size="small" round :type="actionTagType(rule.action)">{{ actionLabel(rule.action) }}</n-tag>
+            </div>
+            <n-switch
+              :value="rule.enabled"
+              :loading="rulesStore.customRuleUpdating[rule.id]"
+              @update:value="onToggleCustomRule(rule.id)"
+            />
+          </div>
+          <div class="rule-payload">{{ rule.payload || '-' }}</div>
+          <div v-if="rule.note" class="custom-note">{{ rule.note }}</div>
+          <div class="rule-footer">
+            <n-space size="small">
+              <n-button size="tiny" secondary @click="openEditCustomRule(rule)">
+                {{ customLabels.edit }}
+              </n-button>
+              <n-popconfirm @positive-click="onDeleteCustomRule(rule.id)">
+                <template #trigger>
+                  <n-button size="tiny" secondary type="error">{{ customLabels.delete }}</n-button>
+                </template>
+                {{ customLabels.deleteConfirm }}
+              </n-popconfirm>
+            </n-space>
+            <n-tag
+              size="small"
+              round
+              :bordered="false"
+              :type="rule.enabled ? 'success' : 'warning'"
+            >
+              {{ rule.enabled ? providerLabels.enabled : providerLabels.disabled }}
+            </n-tag>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="empty-state">
+        <div class="empty-icon">
+          <n-icon size="48"><AddOutline /></n-icon>
+        </div>
+        <h3 class="empty-title">{{ customLabels.empty }}</h3>
+        <n-button type="primary" secondary style="margin-top: 16px" @click="openCreateCustomRule">
+          {{ customLabels.add }}
+        </n-button>
+      </div>
+    </div>
+
+    <!-- 自定义规则编辑表单 -->
+    <n-modal
+      v-model:show="customModalShow"
+      preset="card"
+      :title="editingCustomRule ? customLabels.editTitle : customLabels.addTitle"
+      style="max-width: 520px"
+    >
+      <n-form label-placement="top">
+        <n-form-item :label="customLabels.matchType">
+          <n-select v-model:value="customForm.matchType" :options="matchTypeOptions" />
+        </n-form-item>
+        <n-form-item :label="customLabels.payload">
+          <n-input
+            v-model:value="customForm.payload"
+            type="textarea"
+            :rows="3"
+            :placeholder="customLabels.payloadPlaceholder"
+          />
+        </n-form-item>
+        <n-form-item :label="customLabels.action">
+          <n-select v-model:value="customForm.action" :options="actionOptions" />
+        </n-form-item>
+        <n-form-item :label="customLabels.note">
+          <n-input v-model:value="customForm.note" :placeholder="customLabels.notePlaceholder" />
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="customModalShow = false">{{ customLabels.cancel }}</n-button>
+          <n-button type="primary" :loading="customSubmitting" @click="submitCustomRule">
+            {{ customLabels.confirm }}
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { FilterOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
+import { AddOutline, FilterOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { useRulesStore } from '@/stores/kernel/RulesStore'
 import { useI18n } from 'vue-i18n'
 import type { RuleItem } from '@/types/controller'
+import type {
+  CustomRule,
+  CustomRuleAction,
+  CustomRuleMatchType,
+} from '@/types/generated'
 
 defineOptions({
   name: 'RulesView',
@@ -138,9 +243,20 @@ defineOptions({
 const { t, locale } = useI18n()
 const message = useMessage()
 const rulesStore = useRulesStore()
-const activeTab = ref<'rules' | 'providers'>('rules')
+const activeTab = ref<'rules' | 'providers' | 'custom'>('rules')
 const searchQuery = ref('')
 const typeFilter = ref<string | null>(null)
+
+// 自定义规则表单状态
+const customModalShow = ref(false)
+const customSubmitting = ref(false)
+const editingCustomRule = ref<CustomRule | null>(null)
+const customForm = reactive({
+  matchType: 'domain_suffix' as CustomRuleMatchType,
+  payload: '',
+  action: 'direct' as CustomRuleAction,
+  note: '',
+})
 
 const providerLabels = computed(() => ({
   rulesTab: locale.value.startsWith('zh') ? '规则列表' : 'Rules',
@@ -152,6 +268,67 @@ const providerLabels = computed(() => ({
   enabled: locale.value.startsWith('zh') ? '已启用' : 'Enabled',
   disabled: locale.value.startsWith('zh') ? '已停用' : 'Disabled',
 }))
+
+const customLabels = computed(() => {
+  const zh = locale.value.startsWith('zh')
+  return {
+    tab: zh ? '自定义' : 'Custom',
+    add: zh ? '新增规则' : 'Add Rule',
+    edit: zh ? '编辑' : 'Edit',
+    delete: zh ? '删除' : 'Delete',
+    deleteConfirm: zh ? '确认删除这条自定义规则？' : 'Delete this custom rule?',
+    addTitle: zh ? '新增自定义规则' : 'Add Custom Rule',
+    editTitle: zh ? '编辑自定义规则' : 'Edit Custom Rule',
+    cancel: zh ? '取消' : 'Cancel',
+    confirm: zh ? '保存' : 'Save',
+    matchType: zh ? '匹配类型' : 'Match Type',
+    payload: zh ? '匹配内容' : 'Payload',
+    payloadPlaceholder: zh
+      ? '每行一个，或用逗号分隔（如 example.com, *.test.com）'
+      : 'One per line, or comma-separated (e.g. example.com, *.test.com)',
+    action: zh ? '动作' : 'Action',
+    note: zh ? '备注' : 'Note',
+    notePlaceholder: zh ? '可选' : 'Optional',
+    empty: zh ? '暂无自定义规则' : 'No custom rules',
+    hint: zh
+      ? '自定义规则持久化在本地，重启内核后生效。与上方“规则列表”（内核默认规则，仅本会话生效）不同。'
+      : 'Custom rules are persisted locally and take effect after kernel restart. Different from the built-in rules above (runtime only).',
+    addSuccess: zh ? '已新增规则，重启内核后生效' : 'Rule added (effective after kernel restart)',
+    updateSuccess: zh ? '已更新规则，重启内核后生效' : 'Rule updated (effective after kernel restart)',
+    deleteSuccess: zh ? '已删除规则，重启内核后生效' : 'Rule deleted (effective after kernel restart)',
+  }
+})
+
+const matchTypeOptions = computed(() => {
+  const zh = locale.value.startsWith('zh')
+  return [
+    { label: zh ? '域名后缀' : 'Domain Suffix', value: 'domain_suffix' as CustomRuleMatchType },
+    { label: zh ? '精确域名' : 'Domain', value: 'domain' as CustomRuleMatchType },
+    { label: zh ? '域名关键字' : 'Domain Keyword', value: 'domain_keyword' as CustomRuleMatchType },
+    { label: 'IP CIDR', value: 'ip_cidr' as CustomRuleMatchType },
+  ]
+})
+
+const actionOptions = computed(() => {
+  const zh = locale.value.startsWith('zh')
+  return [
+    { label: zh ? '直连' : 'Direct', value: 'direct' as CustomRuleAction },
+    { label: zh ? '走代理' : 'Proxy', value: 'proxy' as CustomRuleAction },
+    { label: zh ? '拦截' : 'Block', value: 'block' as CustomRuleAction },
+  ]
+})
+
+const matchTypeLabel = (mt: CustomRuleMatchType) =>
+  matchTypeOptions.value.find((o) => o.value === mt)?.label || mt
+
+const actionLabel = (act: CustomRuleAction) =>
+  actionOptions.value.find((o) => o.value === act)?.label || act
+
+const actionTagType = (act: CustomRuleAction): 'success' | 'info' | 'error' => {
+  if (act === 'direct') return 'success'
+  if (act === 'proxy') return 'info'
+  return 'error'
+}
 
 const filteredRules = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
@@ -225,6 +402,78 @@ const toggleRule = async (rule: RuleItem) => {
   }
 }
 
+const resetCustomForm = () => {
+  customForm.matchType = 'domain_suffix'
+  customForm.payload = ''
+  customForm.action = 'direct'
+  customForm.note = ''
+}
+
+const openCreateCustomRule = () => {
+  editingCustomRule.value = null
+  resetCustomForm()
+  customModalShow.value = true
+}
+
+const openEditCustomRule = (rule: CustomRule) => {
+  editingCustomRule.value = rule
+  customForm.matchType = rule.match_type
+  customForm.payload = rule.payload
+  customForm.action = rule.action
+  customForm.note = rule.note ?? ''
+  customModalShow.value = true
+}
+
+const submitCustomRule = async () => {
+  if (!customForm.payload.trim()) {
+    message.error(customLabels.value.payload)
+    return
+  }
+  customSubmitting.value = true
+  try {
+    if (editingCustomRule.value) {
+      await rulesStore.updateCustomRule(
+        editingCustomRule.value.id,
+        customForm.matchType,
+        customForm.payload,
+        customForm.action,
+        customForm.note || undefined,
+      )
+      message.success(customLabels.value.updateSuccess)
+    } else {
+      await rulesStore.addCustomRule(
+        customForm.matchType,
+        customForm.payload,
+        customForm.action,
+        customForm.note || undefined,
+      )
+      message.success(customLabels.value.addSuccess)
+    }
+    customModalShow.value = false
+  } catch (error) {
+    message.error(String(error))
+  } finally {
+    customSubmitting.value = false
+  }
+}
+
+const onToggleCustomRule = (id: string) => async () => {
+  try {
+    await rulesStore.toggleCustomRule(id)
+  } catch (error) {
+    message.error(String(error))
+  }
+}
+
+const onDeleteCustomRule = async (id: string) => {
+  try {
+    await rulesStore.deleteCustomRule(id)
+    message.success(customLabels.value.deleteSuccess)
+  } catch (error) {
+    message.error(String(error))
+  }
+}
+
 const getProxyLabel = (proxy: string) => {
   if (proxy === 'direct') return t('rules.directConnect')
   if (proxy === 'reject') return t('rules.blockAction')
@@ -238,7 +487,7 @@ const formatProviderTime = (value?: string) => {
   return date.toLocaleString()
 }
 
-if (!rulesStore.rules.length && !rulesStore.providers.length) {
+if (!rulesStore.rules.length && !rulesStore.providers.length && !rulesStore.customRules.length) {
   refreshAll()
 }
 </script>
@@ -310,6 +559,20 @@ if (!rulesStore.rules.length && !rulesStore.providers.length) {
   color: var(--text-primary);
   line-height: 1.5;
   word-break: break-word;
+}
+
+.custom-note {
+  margin: -8px 0 14px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  word-break: break-word;
+}
+
+.custom-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  margin-bottom: 12px;
 }
 
 .rule-footer,

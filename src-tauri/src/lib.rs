@@ -280,6 +280,12 @@ pub fn run() {
             crate::app::core::proxy_service::toggle_rule_disabled,
             crate::app::core::proxy_service::close_all_connections,
             crate::app::core::proxy_service::close_connection,
+            // 自定义规则 CRUD（issue #62）
+            crate::app::core::proxy_service::list_custom_rules,
+            crate::app::core::proxy_service::add_custom_rule,
+            crate::app::core::proxy_service::update_custom_rule,
+            crate::app::core::proxy_service::delete_custom_rule,
+            crate::app::core::proxy_service::toggle_custom_rule,
             // Tray commands
             crate::app::tray::commands::tray_sync_state,
             crate::app::tray::commands::tray_set_last_visible_route,

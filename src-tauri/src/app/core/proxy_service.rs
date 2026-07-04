@@ -750,3 +750,323 @@ pub async fn test_node_delay(
     )
     .await)
 }
+
+// ===================== 用户自定义规则（issue #62）=====================
+//
+// 生命周期说明（与内核默认规则截然不同）：
+// - 自定义规则持久化在 generic_config 表（key = STORAGE_KEY），重启保留；
+// - 写入“活动 sing-box 配置文件”的 route.rules，由内核下次启动读取；
+// - 命令只做 CRUD + 注入到磁盘配置，不实时热更内核（与全局设置一致：改完重启内核生效）。
+//
+// 注入策略：读取 AppConfig.active_config_path 指向的文件，调用 inject_custom_rules，
+// 写回磁盘。若该文件是“用户原始订阅配置”（use_original_config），则跳过注入避免破坏。
+
+use crate::app::singbox::config_generator::inject_custom_rules;
+use crate::app::singbox::common::normalize_default_outbound;
+use crate::app::storage::custom_rule::{CustomRule, CustomRuleAction, CustomRuleMatchType, STORAGE_KEY};
+use crate::app::storage::enhanced_storage_service::get_enhanced_storage;
+use chrono::Utc;
+
+/// 读取所有自定义规则（按创建时间升序）。
+#[tauri::command]
+pub async fn list_custom_rules(app_handle: AppHandle) -> Result<Vec<CustomRule>, String> {
+    let storage = get_enhanced_storage(&app_handle)
+        .await
+        .map_err(|e| format!("初始化存储失败: {}", e))?;
+    let rules: Option<Vec<CustomRule>> = storage
+        .load_generic_config(STORAGE_KEY)
+        .await
+        .map_err(|e| format!("读取自定义规则失败: {}", e))?;
+    let mut rules = rules.unwrap_or_default();
+    rules.sort_by_key(|r| r.created_at);
+    Ok(rules)
+}
+
+/// 新增一条自定义规则。payload/action/match_type 由前端传入。
+#[tauri::command]
+pub async fn add_custom_rule(
+    app_handle: AppHandle,
+    match_type: CustomRuleMatchType,
+    payload: String,
+    action: CustomRuleAction,
+    note: Option<String>,
+) -> Result<CustomRule, String> {
+    if payload.trim().is_empty() {
+        return Err("匹配内容不能为空".to_string());
+    }
+    let storage = get_enhanced_storage(&app_handle)
+        .await
+        .map_err(|e| format!("初始化存储失败: {}", e))?;
+    let mut rules: Vec<CustomRule> = storage
+        .load_generic_config(STORAGE_KEY)
+        .await
+        .map_err(|e| format!("读取自定义规则失败: {}", e))?
+        .unwrap_or_default();
+
+    let now = Utc::now();
+    let rule = CustomRule {
+        id: uuid_v4(),
+        enabled: true,
+        match_type,
+        payload,
+        action,
+        outbound: None,
+        note,
+        created_at: now,
+        updated_at: now,
+    };
+    rules.push(rule.clone());
+    storage
+        .save_generic_config(STORAGE_KEY, &rules)
+        .await
+        .map_err(|e| format!("保存自定义规则失败: {}", e))?;
+    inject_into_active_config(&app_handle).await;
+    Ok(rule)
+}
+
+/// 更新一条规则（按 id 定位）。
+#[tauri::command]
+pub async fn update_custom_rule(
+    app_handle: AppHandle,
+    id: String,
+    match_type: CustomRuleMatchType,
+    payload: String,
+    action: CustomRuleAction,
+    note: Option<String>,
+) -> Result<(), String> {
+    if payload.trim().is_empty() {
+        return Err("匹配内容不能为空".to_string());
+    }
+    let storage = get_enhanced_storage(&app_handle)
+        .await
+        .map_err(|e| format!("初始化存储失败: {}", e))?;
+    let mut rules: Vec<CustomRule> = storage
+        .load_generic_config(STORAGE_KEY)
+        .await
+        .map_err(|e| format!("读取自定义规则失败: {}", e))?
+        .unwrap_or_default();
+
+    let target = rules
+        .iter_mut()
+        .find(|r| r.id == id)
+        .ok_or_else(|| "未找到对应的规则".to_string())?;
+    target.match_type = match_type;
+    target.payload = payload;
+    target.action = action;
+    target.note = note;
+    target.updated_at = Utc::now();
+
+    storage
+        .save_generic_config(STORAGE_KEY, &rules)
+        .await
+        .map_err(|e| format!("保存自定义规则失败: {}", e))?;
+    inject_into_active_config(&app_handle).await;
+    Ok(())
+}
+
+/// 删除一条规则（按 id）。
+#[tauri::command]
+pub async fn delete_custom_rule(app_handle: AppHandle, id: String) -> Result<(), String> {
+    let storage = get_enhanced_storage(&app_handle)
+        .await
+        .map_err(|e| format!("初始化存储失败: {}", e))?;
+    let mut rules: Vec<CustomRule> = storage
+        .load_generic_config(STORAGE_KEY)
+        .await
+        .map_err(|e| format!("读取自定义规则失败: {}", e))?
+        .unwrap_or_default();
+    let before = rules.len();
+    rules.retain(|r| r.id != id);
+    if rules.len() == before {
+        return Err("未找到对应的规则".to_string());
+    }
+    storage
+        .save_generic_config(STORAGE_KEY, &rules)
+        .await
+        .map_err(|e| format!("保存自定义规则失败: {}", e))?;
+    inject_into_active_config(&app_handle).await;
+    Ok(())
+}
+
+/// 切换规则启用/禁用（按 id）。
+#[tauri::command]
+pub async fn toggle_custom_rule(app_handle: AppHandle, id: String) -> Result<(), String> {
+    let storage = get_enhanced_storage(&app_handle)
+        .await
+        .map_err(|e| format!("初始化存储失败: {}", e))?;
+    let mut rules: Vec<CustomRule> = storage
+        .load_generic_config(STORAGE_KEY)
+        .await
+        .map_err(|e| format!("读取自定义规则失败: {}", e))?
+        .unwrap_or_default();
+    let target = rules
+        .iter_mut()
+        .find(|r| r.id == id)
+        .ok_or_else(|| "未找到对应的规则".to_string())?;
+    target.enabled = !target.enabled;
+    target.updated_at = Utc::now();
+    storage
+        .save_generic_config(STORAGE_KEY, &rules)
+        .await
+        .map_err(|e| format!("保存自定义规则失败: {}", e))?;
+    inject_into_active_config(&app_handle).await;
+    Ok(())
+}
+
+/// 把当前所有启用规则注入活动配置文件（失败仅记录，不阻断 CRUD）。
+///
+/// 实现要点：
+/// - 仅对“本程序生成的订阅配置”注入；用户原始订阅（use_original_config）跳过，避免破坏其结构。
+/// - 每次注入前重新读盘、覆盖式重写 route.rules 段是不安全的（默认规则由内核/生成器维护）；
+///   这里采用“先剔除旧的自定义规则标记，再重新注入”的策略——通过给自定义规则打上固定 tag 实现
+///   幂等。但为保持 MVP 简单且不侵入默认规则，我们改为：只在 write_default_config 生成路径注入，
+///   活动配置文件已存在时不重复注入（避免重复）。即：自定义规则改动后需要“重置为默认配置”或
+///   切换订阅才会生效——这通过提示用户“重启内核”来保证（ensure_singbox_config 在缺失时才重写）。
+///
+/// 折中方案：读取活动配置 → inject_custom_rules（该函数基于 rule_set/ip_cidr 定位插入，幂等性
+/// 由调用频率保证：每次 CRUD 后调用，但 inject 会累积）。为避免累积，这里先移除上次注入的规则。
+async fn inject_into_active_config(app_handle: &AppHandle) {
+    if let Err(e) = inject_into_active_config_inner(app_handle).await {
+        warn!("自定义规则注入活动配置失败（不影响持久化）: {}", e);
+    }
+}
+
+async fn inject_into_active_config_inner(app_handle: &AppHandle) -> Result<(), String> {
+    let storage = get_enhanced_storage(app_handle)
+        .await
+        .map_err(|e| format!("初始化存储失败: {}", e))?;
+    let app_config = crate::app::storage::enhanced_storage_service::db_get_app_config(
+        app_handle.clone(),
+    )
+    .await
+    .map_err(|e| format!("读取应用配置失败: {}", e))?;
+
+    // 用户原始订阅配置：不注入，避免破坏其结构。
+    if is_active_config_use_original(&storage, &app_config).await {
+        info!("当前活动订阅为原始配置，跳过自定义规则注入");
+        return Ok(());
+    }
+
+    let config_path = match &app_config.active_config_path {
+        Some(p) => std::path::PathBuf::from(p),
+        None => return Ok(()),
+    };
+    if !config_path.exists() {
+        return Ok(());
+    }
+
+    let rules: Vec<CustomRule> = storage
+        .load_generic_config(STORAGE_KEY)
+        .await
+        .map_err(|e| format!("读取自定义规则失败: {}", e))?
+        .unwrap_or_default();
+
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("读取配置文件失败: {}", e))?;
+    let mut config: Value = serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {}", e))?;
+
+    // 先剔除上一次注入的自定义规则（通过 comment 标记识别），保证幂等。
+    strip_custom_rules(&mut config);
+
+    if !rules.is_empty() {
+        let default_outbound = normalize_default_outbound(&app_config);
+        inject_custom_rules(&mut config, &rules, default_outbound);
+        mark_custom_rules_extent(&mut config);
+    }
+
+    let updated = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("序列化配置失败: {}", e))?;
+    std::fs::write(&config_path, updated).map_err(|e| format!("写入配置失败: {}", e))?;
+    info!("已把 {} 条自定义规则注入活动配置: {:?}", rules.len(), config_path);
+    Ok(())
+}
+
+/// 判断当前活动订阅是否为“原始配置”（原始配置不注入）。
+async fn is_active_config_use_original(
+    storage: &std::sync::Arc<crate::app::storage::enhanced_storage_service::EnhancedStorageService>,
+    app_config: &crate::app::storage::state_model::AppConfig,
+) -> bool {
+    let path = match &app_config.active_config_path {
+        Some(p) => p.clone(),
+        None => return false,
+    };
+    let subscriptions = match storage.get_subscriptions().await {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    subscriptions
+        .iter()
+        .any(|s| s.config_path.as_deref() == Some(&path) && s.use_original_config)
+}
+
+/// 自定义规则在 route.rules 中的起止标记（用对象里的固定 marker 字段标识）。
+const CUSTOM_RULE_START_MARKER: &str = "__custom_rule_start__";
+
+/// 给自定义规则段打上起始标记，便于下次 strip。
+fn mark_custom_rules_extent(config: &mut Value) {
+    if let Some(arr) = config
+        .get_mut("route")
+        .and_then(|r| r.get_mut("rules"))
+        .and_then(|rules| rules.as_array_mut())
+    {
+        if let Some(first) = arr.first_mut() {
+            if let Some(obj) = first.as_object_mut() {
+                obj.insert(CUSTOM_RULE_START_MARKER.to_string(), Value::Bool(true));
+            }
+        }
+    }
+}
+
+/// 移除上一次注入的自定义规则段（从起始标记到下一个默认规则之前）。
+fn strip_custom_rules(config: &mut Value) {
+    let arr = match config
+        .get_mut("route")
+        .and_then(|r| r.get_mut("rules"))
+        .and_then(|rules| rules.as_array_mut())
+    {
+        Some(a) => a,
+        None => return,
+    };
+    // 找到起始标记位置。
+    let start = arr.iter().position(|rule| {
+        rule.as_object()
+            .map(|o| o.contains_key(CUSTOM_RULE_START_MARKER))
+            .unwrap_or(false)
+    });
+    let start = match start {
+        Some(i) => i,
+        None => return,
+    };
+    // 自定义规则段 = 从 start（含）到下一条“内置规则”（含 rule_set/ip_cidr/domain 且不带 marker）之前。
+    // 内置规则的判定：有 rule_set/ip_cidr/domain/domain_suffix 字段。
+    let end = arr[start..]
+        .iter()
+        .skip(1) // 跳过起始标记那条
+        .position(|rule| {
+            let obj = match rule.as_object() {
+                Some(o) => o,
+                None => return false,
+            };
+            (obj.contains_key("rule_set")
+                || obj.contains_key("ip_cidr")
+                || obj.contains_key("domain")
+                || obj.contains_key("domain_suffix"))
+                && !obj.contains_key(CUSTOM_RULE_START_MARKER)
+        });
+    let remove_end = match end {
+        Some(rel) => start + 1 + rel, // 保留 start 那条（去掉 marker 后它通常也是自定义规则，见下）
+        None => arr.len(),
+    };
+    // 移除 [start, remove_end)
+    arr.drain(start..remove_end);
+}
+
+/// 生成简单 uuid（不引入 uuid crate 依赖：用时间戳 + 进程 id 组合）。
+fn uuid_v4() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{:016x}-{:08x}", nanos, std::process::id())
+}

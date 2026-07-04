@@ -1,3 +1,4 @@
+pub mod custom_rule;
 pub mod database;
 pub mod enhanced_storage_service;
 pub mod error;

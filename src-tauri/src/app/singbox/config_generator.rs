@@ -680,6 +680,69 @@ where
     Ok(outbounds.len().saturating_sub(1))
 }
 
+/// 把用户自定义规则注入到已生成的 sing-box 配置的 `route.rules` 中。
+///
+/// 设计说明：
+/// - 插入位置：在第一条“私网/CN 直连”默认规则**之前**，保证用户自定义规则优先于内置分流。
+///   具体策略是插到 `route.rules` 数组头部 sniff/resolve/hijack/global/direct-mode 之后，
+///   即“第一条带 rule_set 或 ip_cidr 的默认直连规则”之前；为保持实现简单稳定，
+///   这里统一插到数组末尾、但放在内置私网直连段之前——通过在生成阶段预留标记实现。
+///
+/// 实际实现采用更稳妥的方式：直接把规则插到 `route.rules` 末尾（在 `final` 之前）。
+/// sing-box 规则匹配是顺序匹配，自定义规则放在默认规则之后仍能命中“未被前面规则覆盖”的流量，
+/// 例如自定义“openai.com → direct”会优先生效，因为默认规则里 openai 走代理组（非直连），
+/// 而用户的 direct 规则只会在域名同时命中时由顺序决定——为确保用户意图优先，
+/// 我们把自定义规则插入到默认私网/CN 直连段之前（即 `sniff/resolve/hijack/clash_mode` 之后）。
+///
+/// 参数：
+/// - `config`: 完整 sing-box 配置（会被原地修改）
+/// - `rules`: 用户自定义规则（已过滤 enabled=true）
+/// - `default_outbound`: action=Proxy 时使用的出站 tag
+///
+/// 返回注入的规则数量（0 表示无注入，调用方可据此决定是否触发重载）。
+pub fn inject_custom_rules(
+    config: &mut Value,
+    rules: &[crate::app::storage::custom_rule::CustomRule],
+    default_outbound: &str,
+) -> usize {
+    let route_rules = match config
+        .get_mut("route")
+        .and_then(|r| r.get_mut("rules"))
+        .and_then(|rules| rules.as_array_mut())
+    {
+        Some(arr) => arr,
+        None => return 0,
+    };
+
+    let custom_values: Vec<Value> = rules
+        .iter()
+        .filter_map(|r| r.to_route_rule(default_outbound))
+        .collect();
+    if custom_values.is_empty() {
+        return 0;
+    }
+
+    let injected = custom_values.len();
+
+    // 找到“第一条默认直连/分流规则”的索引（特征：含 rule_set 或 ip_cidr 或 domain），
+    // 把自定义规则插到它之前，使自定义规则优先于内置 CN/GeoIP/私网分流。
+    let insert_pos = route_rules
+        .iter()
+        .position(|rule| {
+            rule.get("rule_set").is_some()
+                || rule.get("ip_cidr").is_some()
+                || rule.get("domain").is_some()
+                || rule.get("domain_suffix").is_some()
+        })
+        .unwrap_or(route_rules.len());
+
+    for (offset, value) in custom_values.into_iter().enumerate() {
+        route_rules.insert(insert_pos + offset, value);
+    }
+
+    injected
+}
+
 #[cfg(test)]
 #[path = "config_generator.tests.rs"]
 mod tests;

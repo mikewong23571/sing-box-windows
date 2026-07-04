@@ -2,6 +2,11 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { ruleService } from '@/services/rule-service'
 import type { RuleItem, RuleProvider } from '@/types/controller'
+import type {
+  CustomRule,
+  CustomRuleAction,
+  CustomRuleMatchType,
+} from '@/types/generated'
 
 const normalizeRules = (input: RuleItem[] | Record<string, RuleItem>) => {
   if (Array.isArray(input)) {
@@ -24,18 +29,74 @@ export const useRulesStore = defineStore('rules', () => {
   const providerUpdatingMap = ref<Record<string, boolean>>({})
   const ruleUpdatingMap = ref<Record<number, boolean>>({})
 
+  // 自定义规则（持久化在本地，区别于内核运行时 rules）。
+  const customRules = ref<CustomRule[]>([])
+  const customRuleUpdating = ref<Record<string, boolean>>({})
+
   const fetchAll = async () => {
     loading.value = true
     try {
-      const [rulesResponse, providersResponse] = await Promise.all([
+      const [rulesResponse, providersResponse, customResponse] = await Promise.all([
         ruleService.getRules(),
         ruleService.getProviders(),
+        ruleService.listCustomRules().catch(() => [] as CustomRule[]),
       ])
 
       rules.value = normalizeRules(rulesResponse.rules)
       providers.value = Object.values(providersResponse.providers || {})
+      customRules.value = customResponse
     } finally {
       loading.value = false
+    }
+  }
+
+  const fetchCustomRules = async () => {
+    customRules.value = await ruleService.listCustomRules()
+  }
+
+  const addCustomRule = async (
+    matchType: CustomRuleMatchType,
+    payload: string,
+    action: CustomRuleAction,
+    note?: string,
+  ) => {
+    await ruleService.addCustomRule(matchType, payload, action, note)
+    await fetchCustomRules()
+  }
+
+  const updateCustomRule = async (
+    id: string,
+    matchType: CustomRuleMatchType,
+    payload: string,
+    action: CustomRuleAction,
+    note?: string,
+  ) => {
+    customRuleUpdating.value = { ...customRuleUpdating.value, [id]: true }
+    try {
+      await ruleService.updateCustomRule(id, matchType, payload, action, note)
+      await fetchCustomRules()
+    } finally {
+      customRuleUpdating.value = { ...customRuleUpdating.value, [id]: false }
+    }
+  }
+
+  const deleteCustomRule = async (id: string) => {
+    customRuleUpdating.value = { ...customRuleUpdating.value, [id]: true }
+    try {
+      await ruleService.deleteCustomRule(id)
+      await fetchCustomRules()
+    } finally {
+      customRuleUpdating.value = { ...customRuleUpdating.value, [id]: false }
+    }
+  }
+
+  const toggleCustomRule = async (id: string) => {
+    customRuleUpdating.value = { ...customRuleUpdating.value, [id]: true }
+    try {
+      await ruleService.toggleCustomRule(id)
+      await fetchCustomRules()
+    } finally {
+      customRuleUpdating.value = { ...customRuleUpdating.value, [id]: false }
     }
   }
 
@@ -97,10 +158,17 @@ export const useRulesStore = defineStore('rules', () => {
     providers,
     providerUpdatingMap,
     ruleUpdatingMap,
+    customRules,
+    customRuleUpdating,
     ruleTypes,
     fetchAll,
+    fetchCustomRules,
     updateProvider,
     updateAllProviders,
     toggleDisabled,
+    addCustomRule,
+    updateCustomRule,
+    deleteCustomRule,
+    toggleCustomRule,
   }
 })
