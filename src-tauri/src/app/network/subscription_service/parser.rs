@@ -321,11 +321,48 @@ fn is_supported_outbound_type(node_type: &str) -> bool {
     )
 }
 
+/// 从 Clash 节点对象构造 TLS 配置（hysteria2/tuic/anytls 共用）。
+///
+/// 统一处理 sni/skip-cert-verify/alpn 字段映射，避免在多个分支重复样板代码。
+fn build_tls_from_clash(clash_node: &Value, server: &str) -> Value {
+    let sni = clash_node
+        .get("sni")
+        .and_then(|s| s.as_str())
+        .unwrap_or("");
+    let insecure = clash_node
+        .get("skip-cert-verify")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let mut tls = build_basic_tls_config(server, sni, insecure);
+
+    // alpn 在 Clash YAML 里通常是数组（[h3]），偶尔是逗号字符串，这里都兼容。
+    if let Some(alpn) = clash_node.get("alpn") {
+        if let Some(arr) = alpn.as_array() {
+            let list: Vec<Value> = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| Value::String(s.to_string())))
+                .collect();
+            if !list.is_empty() {
+                tls["alpn"] = Value::Array(list);
+            }
+        } else if let Some(s) = alpn.as_str() {
+            if let Some(parsed) = parse_csv_string_array(Some(s)) {
+                tls["alpn"] = parsed;
+            }
+        }
+    }
+
+    tls
+}
+
 fn convert_clash_node_to_singbox(clash_node: &Value) -> Option<Value> {
     let node_type = clash_node.get("type").and_then(|t| t.as_str())?;
     let name = clash_node.get("name").and_then(|n| n.as_str())?;
     let server = clash_node.get("server").and_then(|s| s.as_str())?;
-    let port = clash_node.get("port").and_then(|p| p.as_u64())?;
+    // serde_yaml 可能把 "22892" 解析为字符串而非整数；同时兼容数值与字符串两种形式。
+    let port = clash_node
+        .get("port")
+        .and_then(|p| p.as_u64().or_else(|| p.as_str().and_then(|s| s.parse::<u64>().ok())))?;
 
     match node_type {
         "vmess" => {
@@ -451,6 +488,99 @@ fn convert_clash_node_to_singbox(clash_node: &Value) -> Option<Value> {
                 "method": method,
                 "password": password
             }))
+        }
+        "hysteria2" => {
+            // sing-box hysteria2 用 password 字段；up/down 在 Clash 是 up/down（MBps），sing-box 用 up_mbps/down_mbps。
+            let password = clash_node.get("password").and_then(|p| p.as_str())?;
+            let mut node = json!({
+                "tag": name,
+                "type": "hysteria2",
+                "server": server,
+                "server_port": port,
+                "password": password,
+                "tls": build_tls_from_clash(clash_node, server)
+            });
+
+            if let Some(up) = clash_node.get("up").and_then(|v| {
+                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+            }) {
+                node["up_mbps"] = json!(up);
+            }
+            if let Some(down) = clash_node.get("down").and_then(|v| {
+                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+            }) {
+                node["down_mbps"] = json!(down);
+            }
+
+            Some(node)
+        }
+        "tuic" => {
+            let uuid = clash_node.get("uuid").and_then(|u| u.as_str())?;
+            let mut node = json!({
+                "tag": name,
+                "type": "tuic",
+                "server": server,
+                "server_port": port,
+                "uuid": uuid,
+                "tls": build_tls_from_clash(clash_node, server)
+            });
+
+            if let Some(password) = clash_node.get("password").and_then(|p| p.as_str()) {
+                node["password"] = json!(password);
+            }
+            if let Some(congestion) = clash_node
+                .get("congestion-controller")
+                .and_then(|c| c.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                node["congestion_control"] = json!(congestion);
+            }
+            if let Some(udp_relay_mode) = clash_node
+                .get("udp-relay-mode")
+                .and_then(|c| c.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                node["udp_relay_mode"] = json!(udp_relay_mode);
+            }
+            if let Some(reduce_rtt) = clash_node.get("reduce-rtt").and_then(|v| v.as_bool()) {
+                node["reduce_rtt"] = json!(reduce_rtt);
+            }
+
+            if let Some(tls_obj) = node.get_mut("tls").and_then(|t| t.as_object_mut()) {
+                if let Some(disable_sni) = clash_node.get("disable-sni").and_then(|v| v.as_bool()) {
+                    tls_obj.insert("disable_sni".to_string(), json!(disable_sni));
+                }
+            }
+
+            Some(node)
+        }
+        "anytls" => {
+            let password = clash_node.get("password").and_then(|p| p.as_str())?;
+            let mut node = json!({
+                "tag": name,
+                "type": "anytls",
+                "server": server,
+                "server_port": port,
+                "password": password,
+                "tls": build_tls_from_clash(clash_node, server)
+            });
+
+            if let Some(interval) = clash_node
+                .get("idle-session-check-interval")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                node["idle_session_check_interval"] = json!(interval);
+            }
+            if let Some(timeout) = clash_node
+                .get("idle-session-timeout")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                node["idle_session_timeout"] = json!(timeout);
+            }
+
+            Some(node)
         }
         _ => None,
     }

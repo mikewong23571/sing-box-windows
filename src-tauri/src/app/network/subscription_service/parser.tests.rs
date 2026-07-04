@@ -223,3 +223,112 @@ hysteria2://password@hy2.example.com:443?peer=example.com#Hysteria2
     assert_eq!(nodes[2]["type"].as_str().unwrap(), "anytls");
     assert_eq!(nodes[3]["type"].as_str().unwrap(), "hysteria2");
 }
+
+// --- issue #61：Clash YAML 路径下 hysteria2 / tuic / anytls 转换 ---
+
+#[test]
+fn parse_clash_yaml_hysteria2() {
+    let yaml = r#"
+proxies:
+  - name: "hy2-test"
+    type: hysteria2
+    server: 203.10.99.66
+    port: 26892
+    sni: v3-web-prime.douyinvod.com
+    up: 50
+    down: 50
+    skip-cert-verify: true
+    password: "secret-pass"
+"#;
+    let nodes = extract_nodes_from_subscription(yaml).expect("should parse");
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["type"].as_str().unwrap(), "hysteria2");
+    assert_eq!(nodes[0]["tag"].as_str().unwrap(), "hy2-test");
+    assert_eq!(nodes[0]["server"].as_str().unwrap(), "203.10.99.66");
+    assert_eq!(nodes[0]["server_port"].as_u64().unwrap(), 26892);
+    assert_eq!(nodes[0]["password"].as_str().unwrap(), "secret-pass");
+    assert_eq!(
+        nodes[0]["tls"]["server_name"].as_str().unwrap(),
+        "v3-web-prime.douyinvod.com"
+    );
+    assert!(nodes[0]["tls"]["insecure"].as_bool().unwrap());
+    assert_eq!(nodes[0]["up_mbps"].as_u64().unwrap(), 50);
+    assert_eq!(nodes[0]["down_mbps"].as_u64().unwrap(), 50);
+}
+
+#[test]
+fn parse_clash_yaml_tuic() {
+    let yaml = r#"
+proxies:
+  - name: "tuic-test"
+    type: tuic
+    server: tuic.example.com
+    port: 22892
+    uuid: 4c4e0c2e-645d-4b9d-a479-697e94629d71
+    password: "secret-pass"
+    alpn: [h3]
+    udp-relay-mode: native
+    congestion-controller: bbr
+    disable-sni: false
+    reduce-rtt: false
+    skip-cert-verify: true
+    sni: www.bing.com
+"#;
+    let nodes = extract_nodes_from_subscription(yaml).expect("should parse");
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["type"].as_str().unwrap(), "tuic");
+    assert_eq!(nodes[0]["tag"].as_str().unwrap(), "tuic-test");
+    assert_eq!(nodes[0]["server_port"].as_u64().unwrap(), 22892);
+    assert_eq!(
+        nodes[0]["uuid"].as_str().unwrap(),
+        "4c4e0c2e-645d-4b9d-a479-697e94629d71"
+    );
+    assert_eq!(nodes[0]["password"].as_str().unwrap(), "secret-pass");
+    assert_eq!(nodes[0]["tls"]["alpn"][0].as_str().unwrap(), "h3");
+    assert_eq!(
+        nodes[0]["tls"]["server_name"].as_str().unwrap(),
+        "www.bing.com"
+    );
+    assert!(nodes[0]["tls"]["insecure"].as_bool().unwrap());
+    assert_eq!(nodes[0]["congestion_control"].as_str().unwrap(), "bbr");
+    assert_eq!(nodes[0]["udp_relay_mode"].as_str().unwrap(), "native");
+}
+
+#[test]
+fn parse_clash_yaml_port_as_string() {
+    // serde_yaml 可能把 "22892" 解析为字符串，必须兼容，否则整条节点被丢弃。
+    let yaml = r#"
+proxies:
+  - name: "str-port"
+    type: hysteria2
+    server: example.com
+    port: "443"
+    password: "p"
+"#;
+    let nodes = extract_nodes_from_subscription(yaml).expect("should parse");
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["type"].as_str().unwrap(), "hysteria2");
+    assert_eq!(nodes[0]["server_port"].as_u64().unwrap(), 443);
+}
+
+#[test]
+fn parse_clash_yaml_multiple_protocols() {
+    // 综合：确认同一份订阅里 vmess/ss/hysteria2/tuic 都能被转换（不再静默丢弃）。
+    let yaml = r#"
+proxies:
+  - {name: vm, type: vmess, server: a.com, port: 443, uuid: u1, cipher: auto}
+  - {name: hy2, type: hysteria2, server: b.com, port: 443, password: p1}
+  - {name: tu, type: tuic, server: c.com, port: 443, uuid: u2}
+  - {name: ss, type: ss, server: d.com, port: 8388, cipher: aes-128-gcm, password: p2}
+"#;
+    let nodes = extract_nodes_from_subscription(yaml).expect("should parse");
+    assert_eq!(nodes.len(), 4);
+    let types: Vec<&str> = nodes
+        .iter()
+        .map(|n| n["type"].as_str().unwrap())
+        .collect();
+    assert!(types.contains(&"vmess"));
+    assert!(types.contains(&"hysteria2"));
+    assert!(types.contains(&"tuic"));
+    assert!(types.contains(&"shadowsocks"));
+}
