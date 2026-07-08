@@ -239,39 +239,39 @@
       </div>
     </transition>
 
-    <h3 class="setting-section-title">{{ extraLabels.dashboardTitle }}</h3>
+    <h3 class="setting-section-title">{{ props.t('setting.extra.dashboardTitle') }}</h3>
 
     <div class="collapsible-header" @click="toggleSection('dashboard')">
-      <span class="collapsible-label">{{ extraLabels.proxyPrefs }}</span>
+      <span class="collapsible-label">{{ props.t('setting.extra.proxyPrefs') }}</span>
       <n-icon :size="16" class="collapse-arrow" :class="{ expanded: expandedSections.dashboard }">
         <ChevronDownOutline />
       </n-icon>
     </div>
     <transition name="collapse">
       <div v-if="expandedSections.dashboard" class="collapsible-body">
-        <div class="form-section-title">{{ extraLabels.proxyPrefs }}</div>
+        <div class="form-section-title">{{ props.t('setting.extra.proxyPrefs') }}</div>
         <div class="setting-form-grid">
-          <n-form-item :label="extraLabels.proxyOrdering">
+          <n-form-item :label="props.t('setting.extra.proxyOrdering')">
             <n-select v-model:value="proxyStore.ordering" :options="proxyOrderingOptions" />
           </n-form-item>
-          <n-form-item :label="extraLabels.proxyDisplay">
+          <n-form-item :label="props.t('setting.extra.proxyDisplay')">
             <n-select v-model:value="proxyStore.displayMode" :options="proxyDisplayOptions" />
           </n-form-item>
         </div>
 
         <div class="setting-toggles-grid">
           <div class="setting-toggle-item">
-            <span class="setting-toggle-label">{{ extraLabels.proxyHideUnavailable }}</span>
+            <span class="setting-toggle-label">{{ props.t('setting.extra.proxyHideUnavailable') }}</span>
             <n-switch v-model:value="proxyStore.hideUnavailable" />
           </div>
           <div class="setting-toggle-item">
-            <span class="setting-toggle-label">{{ extraLabels.proxyAutoClose }}</span>
+            <span class="setting-toggle-label">{{ props.t('setting.extra.proxyAutoClose') }}</span>
             <n-switch v-model:value="proxyStore.autoCloseConnections" />
           </div>
         </div>
 
         <div class="setting-form-grid">
-          <n-form-item :label="extraLabels.latencyTimeout">
+          <n-form-item :label="props.t('setting.extra.latencyTimeout')">
             <n-input-number
               v-model:value="proxyStore.latencyTimeoutMs"
               :min="1000"
@@ -279,14 +279,14 @@
               :step="500"
             />
           </n-form-item>
-          <n-form-item :label="extraLabels.latencyUrl">
+          <n-form-item :label="props.t('setting.extra.latencyUrl')">
             <n-input v-model:value="proxyStore.latencyTestUrl" :placeholder="props.appStore.singboxUrltestUrl" />
           </n-form-item>
         </div>
 
-        <div class="form-section-title">{{ extraLabels.logRetentionPrefs }}</div>
+        <div class="form-section-title">{{ props.t('setting.extra.logRetentionPrefs') }}</div>
         <div class="setting-form-grid">
-          <n-form-item :label="extraLabels.logMaxRows">
+          <n-form-item :label="props.t('setting.extra.logMaxRows')">
             <n-input-number
               v-model:value="logStore.maxLogs"
               :min="100"
@@ -295,7 +295,7 @@
             />
           </n-form-item>
         </div>
-        <div class="setting-hint">{{ extraLabels.logRetentionHint }}</div>
+        <div class="setting-hint">{{ props.t('setting.extra.logRetentionHint') }}</div>
       </div>
     </transition>
   </div>
@@ -361,39 +361,18 @@ const {
   t: props.t,
 })
 
-const extraLabels = computed(() => {
-  const zh = locale.value.startsWith('zh')
-  return {
-    dashboardTitle: zh ? '看板与列表偏好' : 'Dashboard & List Preferences',
-    proxyPrefs: zh ? '代理页偏好' : 'Proxy Preferences',
-    proxyOrdering: zh ? '节点排序' : 'Node Ordering',
-    proxyDisplay: zh ? '节点展示模式' : 'Node Display Mode',
-    proxyHideUnavailable: zh ? '隐藏不可用节点' : 'Hide unavailable nodes',
-    proxyAutoClose: zh ? '切换节点后关闭现有连接' : 'Close existing connections after switch',
-    latencyTimeout: zh ? '测速超时(ms)' : 'Latency timeout (ms)',
-    latencyUrl: zh ? '测速 URL' : 'Latency URL',
-    logRetentionPrefs: zh ? '日志保留' : 'Log Retention',
-    logMaxRows: zh ? '最大日志条数' : 'Maximum log rows',
-    logRetentionHint: zh
-      ? '仅控制前端界面展示的日志条数；磁盘上的 sing-box.log 由内核启动时自动滚动（超过 10MB 保留最近 3 份）。'
-      : 'Controls only the number of log rows shown in the UI. The on-disk sing-box.log is rotated automatically on kernel start (kept to last 3 files after 10MB).',
-  }
-})
-
 const proxyOrderingOptions = computed(() => {
-  const zh = locale.value.startsWith('zh')
   return [
-    { label: zh ? '原始顺序' : 'Natural', value: 'natural' },
-    { label: zh ? '按延迟' : 'Latency', value: 'latency' },
-    { label: zh ? '按名称' : 'Name', value: 'name' },
+    { label: props.t('setting.extra.ordering.natural'), value: 'natural' },
+    { label: props.t('setting.extra.ordering.latency'), value: 'latency' },
+    { label: props.t('setting.extra.ordering.name'), value: 'name' },
   ]
 })
 
 const proxyDisplayOptions = computed(() => {
-  const zh = locale.value.startsWith('zh')
   return [
-    { label: zh ? '卡片' : 'Card', value: 'card' },
-    { label: zh ? '紧凑列表' : 'Compact List', value: 'list' },
+    { label: props.t('setting.extra.display.card'), value: 'card' },
+    { label: props.t('setting.extra.display.list'), value: 'list' },
   ]
 })
 </script>

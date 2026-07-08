@@ -1,5 +1,5 @@
 <template>
-  <div class="page-container">
+  <n-flex vertical size="large" style="height: 100%;" class="page-shell">
     <PageHeader :title="t('sub.title')" :subtitle="t('sub.subtitle')">
       <template #actions>
         <n-button type="primary" @click="showAddModal = true" round>
@@ -14,113 +14,120 @@
 
     <!-- Subscription List -->
     <div class="subscription-section">
-      <div v-if="subStore.list.length > 0" class="subscription-grid">
-        <div
+      <n-grid v-if="subStore.list.length > 0" responsive="screen" cols="1 s:2 m:3 l:4" :x-gap="20" :y-gap="20">
+        <n-grid-item
           v-for="(item, index) in subStore.list"
           :key="index"
-          class="sub-card"
-          :class="{ active: subStore.activeIndex === index }"
         >
-          <div class="sub-card-header">
-            <div class="sub-icon" :class="{ active: subStore.activeIndex === index }">
-              <n-icon size="20"><LinkOutline /></n-icon>
-            </div>
-            <div class="sub-info">
-              <div class="sub-name" :title="item.name">{{ item.name }}</div>
-              <div class="sub-tags">
-                <n-tag size="small" :bordered="false" round>
-                  {{ item.isManual ? t('sub.manual') : t('sub.urlSubscription') }}
-                </n-tag>
-                <n-tag
-                  v-if="subStore.activeIndex === index"
-                  type="success"
-                  size="small"
-                  :bordered="false"
-                  round
+          <n-card
+            hoverable
+            :bordered="true"
+            :class="{ active: subStore.activeIndex === index }"
+            class="sub-card"
+          >
+            <template #header>
+              <n-flex justify="space-between" align="center">
+                <n-flex align="center">
+                  <n-avatar :class="{ active: subStore.activeIndex === index }" class="sub-icon">
+                    <n-icon size="20"><LinkOutline /></n-icon>
+                  </n-avatar>
+                  <n-flex vertical size="small" style="min-width: 0">
+                    <n-ellipsis :line-clamp="1" :title="item.name" class="sub-name">{{ item.name }}</n-ellipsis>
+                    <n-space size="small">
+                      <n-tag size="small" :bordered="false" round>
+                        {{ item.isManual ? t('sub.manual') : t('sub.urlSubscription') }}
+                      </n-tag>
+                      <n-tag
+                        v-if="subStore.activeIndex === index"
+                        size="small"
+                        :bordered="false"
+                        round
+                      >
+                        {{ t('sub.inUse') }}
+                      </n-tag>
+                      <n-tag
+                        v-if="!item.isManual && (item.autoUpdateIntervalMinutes ?? DEFAULT_AUTO_UPDATE_MINUTES) > 0"
+                        size="small"
+                        round
+                        :bordered="false"
+                      >
+                        <template #icon>
+                          <n-icon size="14"><TimerOutline /></n-icon>
+                        </template>
+                        {{ formatIntervalLabel(item.autoUpdateIntervalMinutes) }}
+                      </n-tag>
+                    </n-space>
+                  </n-flex>
+                </n-flex>
+                <n-dropdown
+                  trigger="hover"
+                  placement="bottom-end"
+                  :options="getDropdownOptions(index)"
                 >
-                  {{ t('sub.inUse') }}
-                </n-tag>
-                <n-tag
-                  v-if="!item.isManual && (item.autoUpdateIntervalMinutes ?? DEFAULT_AUTO_UPDATE_MINUTES) > 0"
-                  size="small"
-                  round
-                  :bordered="false"
-                  type="info"
-                >
-                  <template #icon>
-                    <n-icon size="14"><TimerOutline /></n-icon>
-                  </template>
-                  {{ formatIntervalLabel(item.autoUpdateIntervalMinutes) }}
-                </n-tag>
-              </div>
-            </div>
-            <n-dropdown
-              trigger="hover"
-              placement="bottom-end"
-              :options="getDropdownOptions(index)"
-            >
-              <n-button text class="more-btn">
-                <n-icon size="20"><EllipsisVerticalOutline /></n-icon>
+                  <n-button text class="more-btn">
+                    <n-icon size="20"><EllipsisVerticalOutline /></n-icon>
+                  </n-button>
+                </n-dropdown>
+              </n-flex>
+            </template>
+
+            <n-flex vertical size="small">
+              <n-flex align="center" :wrap="false" class="info-row" :title="item.url || t('sub.manualContent')">
+                <n-icon size="14"><GlobeOutline /></n-icon>
+                <n-ellipsis :tooltip="false" class="info-text">{{ item.url || t('sub.manualContent') }}</n-ellipsis>
+              </n-flex>
+              <n-flex align="center" :wrap="false" class="info-row">
+                <n-icon size="14"><TimeOutline /></n-icon>
+                <n-ellipsis :tooltip="false" class="info-text">
+                  {{ item.lastUpdate ? formatTime(item.lastUpdate) : t('sub.neverUsed') }}
+                </n-ellipsis>
+              </n-flex>
+              <n-flex align="center" :wrap="false" v-if="hasSubscriptionTraffic(item)" class="info-row">
+                <n-icon size="14"><StatsChartOutline /></n-icon>
+                <n-ellipsis :tooltip="false" class="info-text">{{ formatTrafficSummary(item) }}</n-ellipsis>
+              </n-flex>
+              <n-flex align="center" :wrap="false" v-if="item.subscriptionExpire" class="info-row">
+                <n-icon size="14"><CalendarOutline /></n-icon>
+                <n-ellipsis :tooltip="false" class="info-text">{{ formatExpireTime(item.subscriptionExpire) }}</n-ellipsis>
+              </n-flex>
+              <n-flex align="center" :wrap="false" v-if="item.autoUpdateFailCount && item.autoUpdateFailCount > 0" class="info-row warn">
+                <n-icon size="14"><AlertCircleOutline /></n-icon>
+                <n-ellipsis :tooltip="false" class="info-text">{{ formatAutoUpdateHealth(item) }}</n-ellipsis>
+              </n-flex>
+            </n-flex>
+
+            <template #action>
+              <n-button
+                block
+                :type="subStore.activeIndex === index ? 'success' : 'primary'"
+                secondary
+                :loading="item.isLoading"
+                @click="useSubscription(index)"
+              >
+                <template #icon>
+                  <n-icon>
+                    <CheckmarkCircleOutline v-if="subStore.activeIndex === index" />
+                    <PlayCircleOutline v-else />
+                  </n-icon>
+                </template>
+                {{ subStore.activeIndex === index ? t('sub.useAgain') : t('sub.use') }}
               </n-button>
-            </n-dropdown>
-          </div>
-
-          <div class="sub-card-body">
-            <div class="info-row" :title="item.url || t('sub.manualContent')">
-              <n-icon size="14"><GlobeOutline /></n-icon>
-              <span class="info-text">{{ item.url || t('sub.manualContent') }}</span>
-            </div>
-            <div class="info-row">
-              <n-icon size="14"><TimeOutline /></n-icon>
-              <span class="info-text">
-                {{ item.lastUpdate ? formatTime(item.lastUpdate) : t('sub.neverUsed') }}
-              </span>
-            </div>
-            <div v-if="hasSubscriptionTraffic(item)" class="info-row">
-              <n-icon size="14"><StatsChartOutline /></n-icon>
-              <span class="info-text">{{ formatTrafficSummary(item) }}</span>
-            </div>
-            <div v-if="item.subscriptionExpire" class="info-row">
-              <n-icon size="14"><CalendarOutline /></n-icon>
-              <span class="info-text">{{ formatExpireTime(item.subscriptionExpire) }}</span>
-            </div>
-            <div v-if="item.autoUpdateFailCount && item.autoUpdateFailCount > 0" class="info-row warn">
-              <n-icon size="14"><AlertCircleOutline /></n-icon>
-              <span class="info-text">{{ formatAutoUpdateHealth(item) }}</span>
-            </div>
-          </div>
-
-          <div class="sub-card-footer">
-            <n-button
-              block
-              :type="subStore.activeIndex === index ? 'success' : 'primary'"
-              secondary
-              :loading="item.isLoading"
-              @click="useSubscription(index)"
-            >
-              <template #icon>
-                <n-icon>
-                  <CheckmarkCircleOutline v-if="subStore.activeIndex === index" />
-                  <PlayCircleOutline v-else />
-                </n-icon>
-              </template>
-              {{ subStore.activeIndex === index ? t('sub.useAgain') : t('sub.use') }}
-            </n-button>
-          </div>
-        </div>
-      </div>
+            </template>
+          </n-card>
+        </n-grid-item>
+      </n-grid>
 
       <!-- Empty State -->
-      <div v-else class="empty-state">
-        <div class="empty-icon">
-          <n-icon size="48"><LinkOutline /></n-icon>
-        </div>
-        <h3 class="empty-title">{{ t('sub.noSubs') }}</h3>
-        <p class="empty-desc">{{ t('sub.noSubscriptionsYet') }}</p>
-        <n-button type="primary" @click="showAddModal = true">
-          {{ t('sub.addFirstSubscription') }}
-        </n-button>
-      </div>
+      <n-empty v-else size="huge" :description="t('sub.noSubscriptionsYet')">
+        <template #icon>
+          <n-icon><LinkOutline /></n-icon>
+        </template>
+        <template #extra>
+          <n-button type="primary" @click="showAddModal = true">
+            {{ t('sub.addFirstSubscription') }}
+          </n-button>
+        </template>
+      </n-empty>
     </div>
 
     <!-- Add/Edit Modal -->
@@ -152,8 +159,10 @@
                 :rows="3"
                 :placeholder="t('sub.urlPlaceholder')"
               />
+              <template #feedback>
+                <n-text depth="3">{{ t('sub.urlHint') }}</n-text>
+              </template>
             </n-form-item>
-            <p class="form-hint">{{ t('sub.urlHint') }}</p>
           </n-tab-pane>
           <n-tab-pane name="manual" :tab="t('sub.manualConfig')">
             <n-form-item :label="t('sub.content')" path="manualContent">        
@@ -164,8 +173,10 @@
                 :placeholder="t('sub.manualContentPlaceholder')"
                 class="code-input"
               />
+              <template #feedback>
+                <n-text depth="3">{{ t('sub.manualHint') }}</n-text>
+              </template>
             </n-form-item>
-            <p class="form-hint">{{ t('sub.manualHint') }}</p>
           </n-tab-pane>
           <n-tab-pane name="uri" :tab="t('sub.uriList')">
             <n-form-item :label="t('sub.uriContent')" path="uriContent">        
@@ -176,21 +187,24 @@
                 :placeholder="t('sub.uriContentPlaceholder')"
                 class="code-input"
               />
+              <template #feedback>
+                <n-text depth="3">{{ t('sub.uriHint') }}</n-text>
+              </template>
             </n-form-item>
-            <p class="form-hint">{{ t('sub.uriHint') }}</p>
           </n-tab-pane>
         </n-tabs>
 
-        <div v-if="activeTab !== 'uri'" class="form-switch">
-          <div class="switch-label">
-            <span>{{ t('sub.useOriginalConfig') }}</span>
-            <span class="switch-desc">{{ formValue.useOriginalConfig ? t('sub.useOriginal') : t('sub.useExtractedNodes') }}</span>
-          </div>
-          <n-switch v-model:value="formValue.useOriginalConfig" @update:value="markUseOriginalTouched" />
-        </div>
-        <p v-if="formValue.useOriginalConfig" class="form-hint warning">
-          {{ t('sub.originalConfigWarning') }}
-        </p>
+        <n-form-item v-if="activeTab !== 'uri'" :label="t('sub.useOriginalConfig')" path="useOriginalConfig">
+          <n-flex align="center" justify="space-between" style="width: 100%">
+            <n-text depth="3">{{ formValue.useOriginalConfig ? t('sub.useOriginal') : t('sub.useExtractedNodes') }}</n-text>
+            <n-switch v-model:value="formValue.useOriginalConfig" @update:value="markUseOriginalTouched" />
+          </n-flex>
+          <template #feedback>
+            <n-alert v-if="formValue.useOriginalConfig" type="warning" show-icon style="margin-top: 8px">
+              {{ t('sub.originalConfigWarning') }}
+            </n-alert>
+          </template>
+        </n-form-item>
 
         <n-form-item :label="t('sub.autoUpdate')" path="autoUpdateIntervalMinutes">
           <n-select
@@ -199,9 +213,9 @@
             size="small"
             :disabled="autoUpdateDisabled"
           />
-          <p v-if="autoUpdateDisabled" class="form-hint">
-            {{ t('sub.autoUpdateManualHint') }}
-          </p>
+          <template #feedback v-if="autoUpdateDisabled">
+            <n-text depth="3">{{ t('sub.autoUpdateManualHint') }}</n-text>
+          </template>
         </n-form-item>
       </n-form>
 
@@ -240,7 +254,7 @@
         </n-space>
       </template>
     </n-modal>
-  </div>
+  </n-flex>
 </template>
 
 <script setup lang="ts">
@@ -820,13 +834,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.page-container {
-  padding: var(--layout-page-padding-y, 24px) var(--layout-page-padding-x, 32px);
-  max-width: var(--layout-page-max-width, 1400px);
-  margin: 0 auto;
+.page-shell {
   display: flex;
   flex-direction: column;
   gap: var(--layout-page-gap, 24px);
+  height: 100%;
 }
 
 
@@ -837,25 +849,28 @@ onUnmounted(() => {
 }
 
 .sub-card {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 16px;
-  padding: 20px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 24px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  transition: all 0.2s ease;
+  transition: all var(--transition-normal);
+  box-shadow: 0 4px 24px -6px rgba(0, 0, 0, 0.05);
 }
 
 .sub-card:hover {
   transform: translateY(-2px);
-  box-shadow: var(--panel-shadow);
+  box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.08);
   border-color: var(--border-hover);
 }
 
 .sub-card.active {
   border-color: var(--primary-color);
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
+  box-shadow: 0 8px 32px -8px rgba(99, 102, 241, 0.15);
 }
 
 .sub-card-header {

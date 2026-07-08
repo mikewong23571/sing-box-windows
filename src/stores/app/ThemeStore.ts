@@ -84,6 +84,27 @@ export const useThemeStore = defineStore(
         borderFocus: `1px solid ${primary}`,
         borderPressed: `1px solid ${primary}`,
         rippleColor: hexToRgba(primary, 0.2),
+        colorSecondary: 'transparent',
+        colorSecondaryHover: isDark.value ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)',
+        colorSecondaryPressed: isDark.value ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.09)',
+      }
+
+      overrides.Card = {
+        ...overrides.Card,
+        color: 'transparent',
+      }
+
+      overrides.Table = {
+        ...overrides.Table,
+        thColor: 'transparent',
+        tdColor: 'transparent',
+        tdColorStriped: isDark.value ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
+      }
+
+      overrides.List = {
+        ...overrides.List,
+        color: 'transparent',
+        colorHover: isDark.value ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
       }
 
       overrides.Switch = {

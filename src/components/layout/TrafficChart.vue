@@ -1,16 +1,6 @@
 <template>
   <div class="traffic-chart-container" ref="chartContainer">
     <canvas ref="chartCanvas" class="chart-canvas"></canvas>
-    <div class="chart-legend">
-      <div class="legend-item upload">
-        <div class="legend-color"></div>
-        <span>{{ t('home.traffic.uploadSpeed') }}</span>
-      </div>
-      <div class="legend-item download">
-        <div class="legend-color"></div>
-        <span>{{ t('home.traffic.downloadSpeed') }}</span>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -310,43 +300,4 @@ watch(themeVars, () => drawChart())
   height: 100%;
 }
 
-.chart-legend {
-  position: absolute;
-  top: 12px;
-  right: 16px;
-  display: flex;
-  gap: 16px;
-  z-index: 1;
-  background-color: var(--glass-bg);
-  border-radius: 10px;
-  padding: 8px 14px;
-  backdrop-filter: blur(8px);
-  box-shadow: var(--glass-shadow);
-  border: 1px solid var(--glass-border);
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.legend-color {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.upload .legend-color {
-  background-color: var(--success-color);
-  box-shadow: 0 0 8px var(--success-color);
-}
-
-.download .legend-color {
-  background-color: var(--primary-color);
-  box-shadow: 0 0 8px var(--primary-color);
-}
 </style>

@@ -31,8 +31,13 @@
           :modes="['hex']"
           size="small"
           :show-alpha="false"
+          style="width: 48px;"
           @update:value="props.onAccentChange"
-        />
+        >
+          <template #label>
+            <span style="display: none;"></span>
+          </template>
+        </n-color-picker>
         <div class="accent-presets">
           <button
             v-for="color in props.accentPresets"
@@ -57,60 +62,6 @@
       />
     </div>
 
-    <h3 class="setting-section-title">{{ props.t('setting.general.title') }}</h3>
-
-    <div class="setting-row">
-      <div class="setting-info">
-        <div class="setting-label">{{ props.t('setting.language.title') }}</div>
-        <div class="setting-desc">{{ props.t('setting.language.description') }}</div>
-      </div>
-      <n-select
-        :value="props.localeStore.locale"
-        :options="props.languageOptions"
-        size="small"
-        style="width: 160px"
-        @update:value="props.onChangeLanguage"
-      />
-    </div>
-
-    <h3 class="setting-section-title">{{ props.t('setting.startup.title') }}</h3>
-
-    <div class="setting-row">
-      <div class="setting-info">
-        <div class="setting-label">{{ props.t('setting.autoStart.app') }}</div>
-        <div class="setting-desc">{{ props.t('setting.autoStart.appDesc') }}</div>
-      </div>
-      <n-switch :value="props.autoStart" @update:value="props.onAutoStartChange" />
-    </div>
-
-    <div v-if="props.autoStart" class="setting-row" style="padding-left: 24px;">
-      <div class="setting-info">
-        <div class="setting-label">
-          {{ props.t('setting.startup.autoHideToTrayOnAutostart') }}
-        </div>
-        <div class="setting-desc">
-          {{ props.t('setting.startup.autoHideToTrayOnAutostartDesc') }}
-        </div>
-      </div>
-      <n-switch
-        :value="props.autoHideToTrayOnAutostart"
-        @update:value="props.onAutoHideToTrayOnAutostartChange"
-      />
-    </div>
-
-    <div class="setting-row">
-      <div class="setting-info">
-        <div class="setting-label">{{ props.t('setting.startup.closeBehavior') }}</div>
-        <div class="setting-desc">{{ props.t('setting.startup.closeBehaviorDesc') }}</div>
-      </div>
-      <n-select
-        :value="props.trayCloseBehavior"
-        :options="props.trayCloseBehaviorOptions"
-        size="small"
-        style="width: 160px"
-        @update:value="props.onTrayCloseBehaviorChange"
-      />
-    </div>
   </div>
 </template>
 
@@ -121,37 +72,19 @@ import {
   MoonOutline,
   DesktopOutline,
 } from '@vicons/ionicons5'
-import type { Locale } from '@/stores/app/LocaleStore'
 import type { ThemeMode } from '@/stores/app/ThemeStore'
-import type { TrayCloseBehavior } from '@/stores/app/AppStore'
-import type { useLocaleStore, useThemeStore } from '@/stores'
+import type { useThemeStore } from '@/stores'
 
-type LocaleStoreLike = ReturnType<typeof useLocaleStore>
 type ThemeStoreLike = ReturnType<typeof useThemeStore>
-
-interface Option<T extends string = string> {
-  label: string
-  value: T
-}
 
 const props = defineProps<{
   t: (key: string, params?: Record<string, string | number>) => string
-  localeStore: LocaleStoreLike
   themeStore: ThemeStoreLike
-  autoStart: boolean
-  autoHideToTrayOnAutostart: boolean
-  trayCloseBehavior: TrayCloseBehavior
-  languageOptions: Option<Locale>[]
-  trayCloseBehaviorOptions: Option<TrayCloseBehavior>[]
   accentPresets: string[]
-  onAutoStartChange: (value: boolean) => void | Promise<void>
-  onAutoHideToTrayOnAutostartChange: (value: boolean) => void | Promise<void>
-  onTrayCloseBehaviorChange: (value: TrayCloseBehavior) => void | Promise<void>
-  onChangeLanguage: (value: string) => void | Promise<void>
-  onThemeModeChange: (value: ThemeMode) => void | Promise<void>
-  onAccentChange: (value: string) => void | Promise<void>
-  selectAccentPreset: (value: string) => void | Promise<void>
-  onCompactModeChange: (value: boolean) => void | Promise<void>
+  onThemeModeChange: (v: ThemeMode) => void
+  onAccentChange: (v: string) => void
+  selectAccentPreset: (color: string) => void
+  onCompactModeChange: (v: boolean) => void
 }>()
 
 const themeModes = computed(() => [

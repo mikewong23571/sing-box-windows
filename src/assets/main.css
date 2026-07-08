@@ -1,119 +1,168 @@
 @import './base.css';
 @import './page-layout.css';
-@import 'vfonts/Lato.css';
-@import 'vfonts/FiraCode.css';
 
 :root {
-  /* Light Mode Variables */
-  --bg-primary: #f8fafc;
-  --bg-secondary: #ffffff;
+  /* Core Typography */
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+
+  /* Light Mode - Base Palette */
+  --bg-app: #f4f6fa;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
   --bg-tertiary: #f1f5f9;
   
+  /* Light Mode - Text */
   --text-primary: #0f172a;
   --text-secondary: #475569;
   --text-tertiary: #94a3b8;
+  --text-muted: #cbd5e1;
   
-  --border-color: rgba(148, 163, 184, 0.2);
+  /* Light Mode - Borders & Dividers */
+  --border-light: rgba(15, 23, 42, 0.06);
+  --border-color: rgba(15, 23, 42, 0.08);
   --border-hover: rgba(99, 102, 241, 0.3);
   
+  /* Core Brand Colors */
   --primary-color: #6366f1;
   --primary-hover: #818cf8;
   --primary-active: #4f46e5;
+  --success-color: #10b981;
+  --warning-color: #f59e0b;
+  --error-color: #ef4444;
+  --info-color: #3b82f6;
   
-  /* Glassmorphism */
-  --glass-bg: rgba(255, 255, 255, 0.8);
-  --glass-border: rgba(255, 255, 255, 0.5);
-  --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+  /* Glassmorphism Light */
+  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-bg-hover: rgba(255, 255, 255, 0.9);
+  --glass-border: rgba(255, 255, 255, 0.4);
+  --glass-shadow: 0 10px 40px -10px rgba(15, 23, 42, 0.08);
+  --glass-blur: blur(24px);
   
-  /* Page Layout specific */
-  --page-bg: #f8fafc;
-  --hero-bg: rgba(255, 255, 255, 0.9);
-  --hero-border: rgba(148, 163, 184, 0.1);
-  --hero-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.05);
-  
-  --panel-bg: rgba(255, 255, 255, 0.9);
-  --panel-border: rgba(148, 163, 184, 0.1);
-  --panel-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.05);
+  /* Component Tokens */
+  --panel-bg: rgba(255, 255, 255, 0.85);
+  --panel-border: rgba(255, 255, 255, 0.6);
+  --panel-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 20px 40px -10px rgba(15, 23, 42, 0.06);
   
   --chip-bg: rgba(99, 102, 241, 0.1);
   --chip-text: #4338ca;
 
+  /* Shared Geometry */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+  
+  --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .dark, [data-theme='dark'] {
-  /* Dark Mode Variables */
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --bg-tertiary: #334155;
+  /* Dark Mode - Base Palette */
+  --bg-app: #09090b; /* True deep black/slate */
+  --bg-primary: #121214;
+  --bg-secondary: #18181b;
+  --bg-tertiary: #27272a;
   
+  /* Dark Mode - Text */
   --text-primary: #f8fafc;
   --text-secondary: #cbd5e1;
   --text-tertiary: #64748b;
+  --text-muted: #475569;
   
-  --border-color: rgba(255, 255, 255, 0.1);
+  /* Dark Mode - Borders & Dividers */
+  --border-light: rgba(255, 255, 255, 0.04);
+  --border-color: rgba(255, 255, 255, 0.08);
   --border-hover: rgba(99, 102, 241, 0.4);
   
+  /* Dark Mode Brand Adaptations (Slightly brighter for contrast) */
   --primary-color: #818cf8;
   --primary-hover: #a5b4fc;
   --primary-active: #6366f1;
+  --success-color: #34d399;
   
-  /* Glassmorphism */
-  --glass-bg: rgba(30, 41, 59, 0.7);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  /* Modern transparent dark theme */
+  --glass-bg: transparent;
+  --glass-bg-hover: rgba(255, 255, 255, 0.04);
+  --glass-border: rgba(255, 255, 255, 0.05);
+  --glass-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.5);
+  --glass-blur: blur(30px);
   
-  /* Page Layout specific */
-  --page-bg: #0f172a;
-  --hero-bg: rgba(30, 41, 59, 0.6);
-  --hero-border: rgba(255, 255, 255, 0.08);
-  --hero-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.5);
+  /* Component Tokens Dark */
+  --panel-bg: transparent;
+  --panel-border: rgba(255, 255, 255, 0.06);
+  --panel-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 20px 40px -10px rgba(0, 0, 0, 0.6);
   
-  --panel-bg: rgba(30, 41, 59, 0.6);
-  --panel-border: rgba(255, 255, 255, 0.08);
-  --panel-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.3);
-  
-  --chip-bg: rgba(99, 102, 241, 0.2);
-  --chip-text: #e0e7ff;
+  --chip-bg: rgba(99, 102, 241, 0.15);
+  --chip-text: #c7d2fe;
 }
 
 :root.compact-mode,
 .compact-mode {
-  /* Compact layout variables */
   --layout-page-padding-x: 20px;
-  --layout-page-padding-y: 14px;
+  --layout-page-padding-y: 16px;
   --layout-page-gap: 16px;
   --layout-grid-gap: 16px;
-  --layout-page-max-width: 1100px;
-  --layout-card-padding: 14px;
-  --layout-card-radius: 12px;
-  --layout-row-gap: 12px;
-  --layout-inline-gap: 10px;
-  --layout-inline-gap-tight: 6px;
-  --layout-subscription-gap: 14px;
+  --layout-page-max-width: 1200px;
+}
+
+body {
+  font-family: var(--font-family);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #app {
   height: 100vh;
-  background-color: var(--bg-primary);
+  background-color: var(--bg-app);
   color: var(--text-primary);
-  transition: background-color 0.3s ease, color 0.3s ease;
+  transition: background-color var(--transition-normal), color var(--transition-normal);
+  overflow: hidden; /* App Shell manages its own scroll */
 }
 
-/* Global Scrollbar */
+/* Global Typography Overrides */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Global Scrollbar - Sleek and modern */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
+  margin: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border-color);
-  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: var(--radius-full);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-tertiary);
+  background: rgba(148, 163, 184, 0.6);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.6);
+}
+
+/* Smooth Vue Transitions */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity var(--transition-fast);
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }

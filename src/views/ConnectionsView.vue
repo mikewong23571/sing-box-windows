@@ -1,5 +1,5 @@
 <template>
-  <div class="page-container">
+  <div class="page-shell">
     <PageHeader :title="t('connections.title')" :subtitle="t('connections.subtitle')">
       <template #actions>
         <n-space>
@@ -16,7 +16,7 @@
                 <PlayOutline v-else />
               </n-icon>
             </template>
-            {{ connectionStore.paused ? proxyLabels.resume : proxyLabels.pause }}
+            {{ connectionStore.paused ? t('connections.resume') : t('connections.pause') }}
           </n-button>
           <n-button
             type="error"
@@ -27,185 +27,222 @@
             <template #icon>
               <n-icon><CloseOutline /></n-icon>
             </template>
-            {{ proxyLabels.closeAll }}
+            {{ t('connections.closeAll') }}
           </n-button>
         </n-space>
       </template>
     </PageHeader>
 
-    <div class="toolbar-card">
-      <div class="toolbar-row">
-        <n-tabs
-          :value="connectionStore.activeTab"
-          type="segment"
-          size="small"
-          @update:value="updateActiveTab"
-        >
-          <n-tab-pane name="active" :tab="proxyLabels.active" />
-          <n-tab-pane name="closed" :tab="proxyLabels.closed" />
-        </n-tabs>
+    <n-tabs
+      v-model:value="connectionStore.activeTab"
+      type="segment"
+      size="small"
+      @update:value="updateActiveTab"
+      style="margin-bottom: 16px; width: 280px;"
+    >
+      <n-tab-pane name="active" :tab="`${t('connections.active')} (${connectionStore.activeConnections.length})`" />
+      <n-tab-pane name="closed" :tab="`${t('connections.closed')} (${connectionStore.closedConnections.length})`" />
+    </n-tabs>
 
-        <n-input
-          v-model:value="connectionStore.searchQuery"
-          :placeholder="t('connections.searchPlaceholder')"
-          clearable
-          class="search-input"
-        >
-          <template #prefix>
-            <n-icon><SearchOutline /></n-icon>
-          </template>
-        </n-input>
+    <n-card size="small" class="toolbar-card">
+      <n-grid responsive="screen" item-responsive :x-gap="12" :y-gap="12" class="toolbar-row">
 
-        <n-select
-          v-model:value="connectionStore.sourceIPFilter"
-          :options="sourceIpOptions"
-          clearable
-          :placeholder="proxyLabels.sourceFilter"
-          class="source-select"
-        />
+        <n-grid-item span="24 m:12 l:6">
+          <n-input
+            v-model:value="connectionStore.searchQuery"
+            :placeholder="t('connections.searchPlaceholder')"
+            clearable
+            class="search-input"
+          >
+            <template #prefix>
+              <n-icon><SearchOutline /></n-icon>
+            </template>
+          </n-input>
+        </n-grid-item>
 
-        <n-select
-          v-model:value="connectionStore.sortKey"
-          :options="sortOptions"
-          class="sort-select"
-        />
+        <n-grid-item span="24 m:12 l:6">
+          <n-input-group>
+            <n-input-group-label>{{ t('connections.sourceFilter') }}</n-input-group-label>
+            <n-select
+              v-model:value="connectionStore.sourceIPFilter"
+              :options="sourceIpOptions"
+              clearable
+              :placeholder="t('common.all')"
+              class="source-select"
+            />
+          </n-input-group>
+        </n-grid-item>
 
-        <n-select
-          v-model:value="connectionStore.groupingKey"
-          :options="groupingOptions"
-          clearable
-          class="sort-select"
-          :placeholder="proxyLabels.grouping"
-        />
+        <n-grid-item span="24 m:12 l:6">
+          <n-input-group>
+            <n-input-group-label>{{ t('common.sort') }}</n-input-group-label>
+            <n-select
+              v-model:value="connectionStore.sortKey"
+              :options="sortOptions"
+              class="sort-select"
+            />
+          </n-input-group>
+        </n-grid-item>
 
-        <n-button quaternary @click="connectionStore.sortDesc = !connectionStore.sortDesc">
-          <template #icon>
-            <n-icon>
-              <ArrowDownOutline v-if="connectionStore.sortDesc" />
-              <ArrowUpOutline v-else />
-            </n-icon>
-          </template>
-          {{ proxyLabels.sortOrder }}
-        </n-button>
-      </div>
+        <n-grid-item span="24 m:12 l:6">
+          <n-flex wrap="nowrap" :size="8">
+            <n-input-group style="flex: 1">
+              <n-input-group-label>{{ t('connections.grouping') }}</n-input-group-label>
+              <n-select
+                v-model:value="connectionStore.groupingKey"
+                :options="groupingOptions"
+                clearable
+                class="sort-select"
+                :placeholder="t('common.all')"
+              />
+            </n-input-group>
+            <n-button @click="connectionStore.sortDesc = !connectionStore.sortDesc">
+              <template #icon>
+                <n-icon>
+                  <ArrowDownOutline v-if="connectionStore.sortDesc" />
+                  <ArrowUpOutline v-else />
+                </n-icon>
+              </template>
+            </n-button>
+          </n-flex>
+        </n-grid-item>
+      </n-grid>
 
-      <div class="stats-row">
-        <n-tag size="small" round :bordered="false" type="primary">
-          {{ t('connections.activeConnections') }}: {{ connectionStore.activeConnections.length }}
-        </n-tag>
+      <n-space style="margin-top: 12px;" class="stats-row">
         <n-tag size="small" round :bordered="false">
-          {{ proxyLabels.closed }}: {{ connectionStore.closedConnections.length }}
-        </n-tag>
-        <n-tag size="small" round :bordered="false" type="warning">
           ↑ {{ formatBytes(connectionStore.connectionsTotal.upload) }}
         </n-tag>
-        <n-tag size="small" round :bordered="false" type="success">
+        <n-tag size="small" round :bordered="false">
           ↓ {{ formatBytes(connectionStore.connectionsTotal.download) }}
         </n-tag>
-        <n-tag size="small" round :bordered="false" type="default">
-          {{ proxyLabels.quickFilter }}: {{ connectionStore.quickFilterEnabled ? labelsOnOff.on : labelsOnOff.off }}
+        <n-tag size="small" round :bordered="false">
+          {{ t('connections.quickFilter') }}: {{ connectionStore.quickFilterEnabled ? labelsOnOff.on : labelsOnOff.off }}
         </n-tag>
-      </div>
-    </div>
+      </n-space>
+    </n-card>
 
-    <div v-if="groupedRows.length" class="table-card">
+    <n-card v-if="groupedRows.length" size="small" style="margin-top: 16px;" class="table-card">
       <div class="connection-table-wrap">
-        <table class="connection-table">
-          <thead>
-            <tr>
-              <th>{{ t('connections.destination') }}</th>
-              <th>{{ t('connections.download') }}</th>
-              <th>{{ t('connections.upload') }}</th>
-              <th>{{ t('connections.downloadSpeed') }}</th>
-              <th>{{ t('connections.uploadSpeed') }}</th>
-              <th>{{ t('connections.chain') }}</th>
-              <th>{{ t('connections.rule') }}</th>
-              <th>{{ t('connections.process') }}</th>
-              <th class="action-column">{{ t('connections.actions') }}</th>
-            </tr>
-          </thead>
-          <tbody v-for="group in groupedRows" :key="group.key || 'all'">
-            <tr v-if="group.key" class="group-row">
-              <td colspan="9">
-                <div class="group-title">
-                  <span>{{ group.key }}</span>
-                  <n-tag size="tiny" round>{{ group.count }}</n-tag>
-                </div>
-              </td>
-            </tr>
-            <tr
-              v-for="connection in group.connections"
-              :key="connection.id"
-              class="connection-row"
-              tabindex="0"
-              @click="selectedConnection = connection"
-              @keydown.enter="selectedConnection = connection"
-              @keydown.space.prevent="selectedConnection = connection"
-            >
-              <td class="destination-cell">
-                <span class="primary-cell">{{ getDestinationText(connection) }}</span>
-                <span class="secondary-cell">{{ getSourceText(connection) }}</span>
-              </td>
-              <td>{{ formatBytes(connection.download) }}</td>
-              <td>{{ formatBytes(connection.upload) }}</td>
-              <td>{{ formatSpeed(connection.downloadSpeed || 0) }}</td>
-              <td>{{ formatSpeed(connection.uploadSpeed || 0) }}</td>
-              <td class="truncate-cell" :title="getChainText(connection)">
+        <n-table :bordered="false" :single-line="false" striped class="connection-table">
+        <thead>
+          <tr>
+            <th>{{ t('connections.destination') }}</th>
+            <th>{{ t('connections.download') }}</th>
+            <th>{{ t('connections.upload') }}</th>
+            <th>{{ t('connections.downloadSpeed') }}</th>
+            <th>{{ t('connections.uploadSpeed') }}</th>
+            <th>{{ t('connections.chain') }}</th>
+            <th>{{ t('connections.rule') }}</th>
+            <th>{{ t('connections.process') }}</th>
+            <th style="width: 80px">{{ t('connections.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody v-for="group in groupedRows" :key="group.key || 'all'">
+          <tr v-if="group.key" class="group-row">
+            <td colspan="9">
+              <n-space align="center" size="small" class="group-title">
+                <n-text strong>{{ group.key }}</n-text>
+                <n-tag size="tiny" round>{{ group.count }}</n-tag>
+              </n-space>
+            </td>
+          </tr>
+          <tr
+            v-for="connection in group.connections"
+            :key="connection.id"
+            class="connection-row"
+            tabindex="0"
+            @click="selectedConnection = connection"
+            @keydown.enter="selectedConnection = connection"
+            @keydown.space.prevent="selectedConnection = connection"
+            style="cursor: pointer;"
+          >
+            <td class="destination-cell">
+              <n-flex vertical :size="0">
+                <n-text>{{ getDestinationText(connection) }}</n-text>
+                <n-text depth="3" style="font-size: 12px">{{ getSourceText(connection) }}</n-text>
+              </n-flex>
+            </td>
+            <td>{{ formatBytes(connection.download) }}</td>
+            <td>{{ formatBytes(connection.upload) }}</td>
+            <td>{{ formatSpeed(connection.downloadSpeed || 0) }}</td>
+            <td>{{ formatSpeed(connection.uploadSpeed || 0) }}</td>
+            <td>
+              <n-ellipsis :tooltip="true" style="max-width: 150px">
                 {{ getChainText(connection) }}
-              </td>
-              <td class="truncate-cell" :title="getRuleText(connection)">
+              </n-ellipsis>
+            </td>
+            <td>
+              <n-ellipsis :tooltip="true" style="max-width: 150px">
                 {{ getRuleText(connection) }}
-              </td>
-              <td class="truncate-cell" :title="getProcessText(connection)">
+              </n-ellipsis>
+            </td>
+            <td>
+              <n-ellipsis :tooltip="true" style="max-width: 150px">
                 {{ getProcessText(connection) }}
-              </td>
-              <td class="action-cell">
-                <n-button
-                  v-if="connectionStore.activeTab === 'active'"
-                  text
-                  size="small"
-                  type="error"
-                  :loading="connectionStore.closingMap[connection.id]"
-                  @click.stop="closeOne(connection.id)"
-                  @keydown.stop
-                >
-                  {{ proxyLabels.close }}
-                </n-button>
-                <span v-else>-</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </n-ellipsis>
+            </td>
+            <td class="action-cell">
+              <n-button
+                v-if="connectionStore.activeTab === 'active'"
+                text
+                size="small"
+                type="error"
+                :loading="connectionStore.closingMap[connection.id]"
+                @click.stop="closeOne(connection.id)"
+                @keydown.stop
+              >
+                {{ t('connections.close') }}
+              </n-button>
+              <span v-else>-</span>
+            </td>
+          </tr>
+        </tbody>
+        </n-table>
       </div>
-    </div>
+    </n-card>
 
-    <div v-else class="empty-state">
-      <div class="empty-icon">
-        <n-icon size="48"><LinkOutline /></n-icon>
-      </div>
-      <h3 class="empty-title">
-        {{ connectionStore.activeTab === 'active' ? t('connections.noActiveConnections') : proxyLabels.noClosed }}
-      </h3>
-    </div>
+    <n-empty
+      v-else
+      size="huge"
+      :description="connectionStore.activeTab === 'active' ? t('connections.noActiveConnections') : t('connections.noClosed')"
+      style="margin-top: 48px"
+    >
+      <template #icon>
+        <n-icon><LinkOutline /></n-icon>
+      </template>
+    </n-empty>
 
-    <n-modal v-model:show="detailVisible" preset="card" :title="proxyLabels.detailTitle" style="width: 720px">
-      <div v-if="selectedConnection" class="detail-grid">
-        <div><strong>ID</strong><span>{{ selectedConnection.id }}</span></div>
-        <div><strong>{{ t('connections.rule') }}</strong><span>{{ getRuleText(selectedConnection) }}</span></div>
-        <div><strong>{{ t('connections.source') }}</strong><span>{{ getSourceText(selectedConnection) }}</span></div>
-        <div><strong>{{ t('connections.destination') }}</strong><span>{{ getDestinationText(selectedConnection) }}</span></div>
-        <div><strong>{{ t('connections.process') }}</strong><span>{{ getProcessText(selectedConnection) }}</span></div>
-        <div><strong>{{ t('connections.inbound') }}</strong><span>{{ selectedConnection.metadata.inboundName || selectedConnection.metadata.inboundUser || '-' }}</span></div>
-        <div><strong>{{ t('connections.network') }}</strong><span>{{ selectedConnection.metadata.network || '-' }}</span></div>
-        <div><strong>{{ t('connections.type') }}</strong><span>{{ selectedConnection.metadata.type || '-' }}</span></div>
-        <div><strong>{{ t('connections.sniffHost') }}</strong><span>{{ selectedConnection.metadata.sniffHost || '-' }}</span></div>
-        <div><strong>{{ t('connections.remote') }}</strong><span>{{ selectedConnection.metadata.remoteDestination || '-' }}</span></div>
-        <div><strong>{{ t('connections.upload') }}</strong><span>{{ formatBytes(selectedConnection.upload) }}</span></div>
-        <div><strong>{{ t('connections.download') }}</strong><span>{{ formatBytes(selectedConnection.download) }}</span></div>
-        <div><strong>{{ t('connections.uploadSpeed') }}</strong><span>{{ formatSpeed(selectedConnection.uploadSpeed || 0) }}</span></div>
-        <div><strong>{{ t('connections.downloadSpeed') }}</strong><span>{{ formatSpeed(selectedConnection.downloadSpeed || 0) }}</span></div>
-        <div><strong>{{ t('connections.chain') }}</strong><span>{{ getChainText(selectedConnection) }}</span></div>
-        <div><strong>{{ t('connections.started') }}</strong><span>{{ formatTimeAgo(selectedConnection.start) }}</span></div>
+    <n-modal v-model:show="detailVisible" preset="card" :title="t('connections.detailTitle')" style="width: 720px" :bordered="false">
+      <div v-if="selectedConnection" style="display: flex; flex-direction: column; gap: 24px;">
+        <div>
+          <n-h6 style="margin-top: 0; margin-bottom: 12px; color: var(--primary-color);">{{ t('connections.destination') }} & {{ t('connections.source') }}</n-h6>
+          <n-descriptions :column="2" size="small">
+            <n-descriptions-item :label="t('connections.destination')">{{ getDestinationText(selectedConnection) }}</n-descriptions-item>
+            <n-descriptions-item :label="t('connections.source')">{{ getSourceText(selectedConnection) }}</n-descriptions-item>
+            <n-descriptions-item :label="t('connections.network')">{{ selectedConnection.metadata.network || '-' }}</n-descriptions-item>
+            <n-descriptions-item :label="t('connections.type')">{{ selectedConnection.metadata.type || '-' }}</n-descriptions-item>
+            <n-descriptions-item :label="t('connections.inbound')">{{ selectedConnection.metadata.inboundName || selectedConnection.metadata.inboundUser || '-' }}</n-descriptions-item>
+          </n-descriptions>
+        </div>
+
+        <div>
+          <n-h6 style="margin-top: 0; margin-bottom: 12px; color: var(--primary-color);">{{ t('connections.rule') }} & {{ t('connections.chain') }}</n-h6>
+          <n-descriptions :column="2" size="small">
+            <n-descriptions-item :label="t('connections.rule')">{{ getRuleText(selectedConnection) }}</n-descriptions-item>
+            <n-descriptions-item :label="t('connections.chain')">{{ getChainText(selectedConnection) }}</n-descriptions-item>
+            <n-descriptions-item :label="t('connections.process')">{{ getProcessText(selectedConnection) }}</n-descriptions-item>
+          </n-descriptions>
+        </div>
+
+        <div>
+          <n-h6 style="margin-top: 0; margin-bottom: 12px; color: var(--primary-color);">{{ t('connections.total') }} & {{ t('connections.start') }}</n-h6>
+          <n-descriptions :column="2" size="small">
+            <n-descriptions-item :label="t('connections.download')">{{ formatBytes(selectedConnection.download) }} ({{ formatSpeed(selectedConnection.downloadSpeed || 0) }})</n-descriptions-item>
+            <n-descriptions-item :label="t('connections.upload')">{{ formatBytes(selectedConnection.upload) }} ({{ formatSpeed(selectedConnection.uploadSpeed || 0) }})</n-descriptions-item>
+            <n-descriptions-item :label="t('connections.start')">{{ formatTimeAgo(selectedConnection.start) }}</n-descriptions-item>
+            <n-descriptions-item label="ID">{{ selectedConnection.id }}</n-descriptions-item>
+          </n-descriptions>
+        </div>
       </div>
     </n-modal>
   </div>
@@ -238,21 +275,6 @@ const { t } = useI18n()
 const message = useMessage()
 const connectionStore = useConnectionStore()
 const selectedConnection = ref<ConnectionItem | null>(null)
-
-const proxyLabels = computed(() => ({
-  active: t('connections.active'),
-  closed: t('connections.closed'),
-  pause: t('connections.pause'),
-  resume: t('connections.resume'),
-  close: t('connections.close'),
-  closeAll: t('connections.closeAll'),
-  sourceFilter: t('connections.sourceFilter'),
-  sortOrder: t('connections.sortOrder'),
-  grouping: t('connections.grouping'),
-  quickFilter: t('connections.quickFilter'),
-  detailTitle: t('connections.detailTitle'),
-  noClosed: t('connections.noClosed'),
-}))
 
 const labelsOnOff = computed(() => ({
   on: t('connections.on'),
@@ -375,18 +397,18 @@ const refreshConnections = async () => {
 const closeAll = async () => {
   try {
     await connectionStore.closeAllConnections()
-    message.success(proxyLabels.value.closeAll)
-  } catch (error) {
-    message.error(String(error))
+    message.success(t('connections.closeAll'))
+  } catch (err) {
+    message.error(String(err))
   }
 }
 
 const closeOne = async (id: string) => {
   try {
     await connectionStore.closeConnection(id)
-    message.success(proxyLabels.value.close)
-  } catch (error) {
-    message.error(String(error))
+    message.success(t('connections.close'))
+  } catch (err) {
+    message.error(String(err))
   }
 }
 
@@ -465,21 +487,21 @@ watch(
 </script>
 
 <style scoped>
-.page-container {
-  padding: var(--layout-page-padding-y, 16px) var(--layout-page-padding-x, 24px);
-  max-width: var(--layout-page-max-width, 1400px);
-  margin: 0 auto;
+.page-shell {
   display: flex;
   flex-direction: column;
   gap: var(--layout-page-gap, 16px);
+  height: 100%;
 }
 
 .toolbar-card,
 .table-card {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 16px;
-  padding: 16px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: 0 4px 24px -6px rgba(0, 0, 0, 0.05);
 }
 
 .toolbar-row {

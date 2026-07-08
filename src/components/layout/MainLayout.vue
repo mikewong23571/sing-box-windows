@@ -1,8 +1,7 @@
 <template>
-  <n-config-provider :theme="theme" :theme-overrides="themeOverrides">
     <n-layout class="app-layout" position="absolute">
-      <!-- Top Header -->
-      <n-layout-header class="app-header" bordered data-tauri-drag-region>
+      <!-- Top Header (Native Window Drag Region) -->
+      <n-layout-header class="app-header" data-tauri-drag-region>
         <div class="header-brand">
           <div class="brand-logo-wrapper" @click="onSelect('home')">
             <img
@@ -16,7 +15,7 @@
             <h1 class="app-name">{{ t('common.appName') }}</h1>
             <div class="app-status" :class="kernelStatusClass">
               <span class="status-dot"></span>
-              {{ appStatusLabel }}
+              <span class="status-label">{{ appStatusLabel }}</span>
             </div>
           </div>
         </div>
@@ -36,17 +35,16 @@
       </n-layout-header>
 
       <!-- Main Layout with Sidebar and Content -->
-      <n-layout has-sider position="absolute" style="top: 50px; bottom: 0">
+      <n-layout has-sider position="absolute" class="app-body">
         <!-- Modern Sidebar -->
         <n-layout-sider
           class="app-sider"
-          :width="240"
+          :width="220"
           :collapsed-width="72"
-          :collapsed="collapsed"
+          v-model:collapsed="collapsed"
           collapse-mode="width"
           :native-scrollbar="false"
-          :show-trigger="false"
-          bordered
+          show-trigger="bar"
         >
           <div class="sider-inner">
             <!-- Navigation Menu -->
@@ -60,38 +58,13 @@
                   :class="{ active: currentMenu === item.key, disabled: item.disabled }"
                   @click="!item.disabled && onSelect(item.key)"
                 >
-                  <n-icon :size="22" class="menu-icon">
+                  <n-icon :size="20" class="menu-icon">
                     <component :is="item.icon" />
                   </n-icon>
                   <transition name="fade-slide">
                     <span v-if="!collapsed" class="menu-text">{{ item.label }}</span>
                   </transition>
-                  <div class="active-indicator" v-if="currentMenu === item.key"></div>
                 </div>
-              </div>
-            </div>
-
-            <!-- Bottom Actions -->
-            <div class="sider-footer">
-              <div class="footer-actions">
-                <n-tooltip placement="right" trigger="hover" :disabled="!collapsed">
-                  <template #trigger>
-                    <button class="action-btn" @click="themeStore.toggleTheme">
-                      <n-icon :size="20">
-                        <MoonOutline v-if="themeStore.isDark" />
-                        <SunnyOutline v-else />
-                      </n-icon>
-                    </button>
-                  </template>
-                  {{ themeStore.isDark ? t('setting.theme.light') : t('setting.theme.dark') }}
-                </n-tooltip>
-
-                <button class="action-btn" @click="collapsed = !collapsed">
-                  <n-icon :size="20">
-                    <ChevronForwardOutline v-if="collapsed" />
-                    <ChevronBackOutline v-else />
-                  </n-icon>
-                </button>
               </div>
             </div>
           </div>
@@ -99,7 +72,6 @@
 
         <!-- Main Content Area -->
         <n-layout-content class="app-content" :native-scrollbar="false">
-          <!-- Page Content -->
           <div class="content-container">
             <router-view v-slot="{ Component }">
               <transition name="page-fade" mode="out-in">
@@ -126,7 +98,6 @@
       @cancel="handleUpdateCancel"
       @skip="handleUpdateSkip"
     />
-  </n-config-provider>
 </template>
 
 <script lang="ts" setup>
@@ -264,53 +235,16 @@ const onSelect = (key: string) => {
 // Update Handling
 const handleShowUpdateModal = (data: unknown) => {
   if (!data || typeof data !== 'object') return
-
   const payload = data as Record<string, unknown>
   updateInfo.value = {
-    latestVersion:
-      typeof payload.latestVersion === 'string'
-        ? payload.latestVersion
-        : typeof payload.latest_version === 'string'
-          ? payload.latest_version
-          : '',
-    currentVersion:
-      typeof payload.currentVersion === 'string' ? payload.currentVersion : updateStore.appVersion,
-    downloadUrl:
-      typeof payload.downloadUrl === 'string'
-        ? payload.downloadUrl
-        : typeof payload.download_url === 'string'
-          ? payload.download_url
-          : '',
-    releasePageUrl:
-      typeof payload.releasePageUrl === 'string'
-        ? payload.releasePageUrl
-        : typeof payload.release_page_url === 'string'
-          ? payload.release_page_url
-          : updateStore.releasePageUrl,
-    releaseNotes:
-      typeof payload.releaseNotes === 'string'
-        ? payload.releaseNotes
-        : typeof payload.release_notes === 'string'
-          ? payload.release_notes
-          : '',
-    releaseDate:
-      typeof payload.releaseDate === 'string'
-        ? payload.releaseDate
-        : typeof payload.release_date === 'string'
-          ? payload.release_date
-          : '',
-    fileSize:
-      typeof payload.fileSize === 'number'
-        ? payload.fileSize
-        : typeof payload.file_size === 'number'
-          ? payload.file_size
-          : 0,
-    supportsInAppUpdate:
-      typeof payload.supportsInAppUpdate === 'boolean'
-        ? payload.supportsInAppUpdate
-        : typeof payload.supports_in_app_update === 'boolean'
-          ? payload.supports_in_app_update
-          : updateStore.supportsInAppUpdate,
+    latestVersion: typeof payload.latestVersion === 'string' ? payload.latestVersion : typeof payload.latest_version === 'string' ? payload.latest_version : '',
+    currentVersion: typeof payload.currentVersion === 'string' ? payload.currentVersion : updateStore.appVersion,
+    downloadUrl: typeof payload.downloadUrl === 'string' ? payload.downloadUrl : typeof payload.download_url === 'string' ? payload.download_url : '',
+    releasePageUrl: typeof payload.releasePageUrl === 'string' ? payload.releasePageUrl : typeof payload.release_page_url === 'string' ? payload.release_page_url : updateStore.releasePageUrl,
+    releaseNotes: typeof payload.releaseNotes === 'string' ? payload.releaseNotes : typeof payload.release_notes === 'string' ? payload.release_notes : '',
+    releaseDate: typeof payload.releaseDate === 'string' ? payload.releaseDate : typeof payload.release_date === 'string' ? payload.release_date : '',
+    fileSize: typeof payload.fileSize === 'number' ? payload.fileSize : typeof payload.file_size === 'number' ? payload.file_size : 0,
+    supportsInAppUpdate: typeof payload.supportsInAppUpdate === 'boolean' ? payload.supportsInAppUpdate : typeof payload.supports_in_app_update === 'boolean' ? payload.supports_in_app_update : updateStore.supportsInAppUpdate,
   }
   showUpdateModal.value = true
 }
@@ -354,26 +288,34 @@ onUnmounted(() => {
 <style scoped>
 .app-layout {
   height: 100vh;
+  background: var(--bg-app);
+}
+
+.app-body {
+  top: 56px !important;
+  bottom: 0;
   background: transparent;
 }
 
-/* Header Styles */
+/* Header Styles - macOS/Windows Native feel */
 .app-header {
-  height: 50px;
+  height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding: 0 16px 0 20px;
   background: var(--glass-bg) !important;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--border-light);
   z-index: 200;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.02);
 }
 
 .header-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   cursor: default;
 }
 
@@ -384,11 +326,11 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: transform 0.2s ease;
+  transition: transform var(--transition-normal);
 }
 
 .brand-logo-wrapper:hover {
-  transform: scale(1.05);
+  transform: scale(1.08) rotate(-2deg);
 }
 
 .brand-logo {
@@ -396,11 +338,11 @@ onUnmounted(() => {
   height: 28px;
   object-fit: contain;
   filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.1));
-  transition: all 0.3s ease;
+  transition: all var(--transition-slow);
 }
 
 .brand-logo.is-running {
-  filter: drop-shadow(0 0 12px rgba(99, 102, 241, 0.5));
+  filter: drop-shadow(0 0 12px rgba(16, 185, 129, 0.6));
 }
 
 .brand-text {
@@ -421,10 +363,18 @@ onUnmounted(() => {
 
 .app-status {
   font-size: 12px;
-  color: var(--text-tertiary);
+  font-weight: 600;
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  transition: all var(--transition-normal);
+}
+
+.status-label {
+  color: var(--text-secondary);
 }
 
 .status-dot {
@@ -432,75 +382,49 @@ onUnmounted(() => {
   height: 6px;
   border-radius: 50%;
   background-color: var(--text-tertiary);
-  transition: background-color 0.3s ease;
+  transition: background-color var(--transition-normal);
 }
 
+.app-status.running { background: rgba(16, 185, 129, 0.1); }
+.app-status.running .status-label { color: var(--success-color); }
 .app-status.running .status-dot {
-  background-color: var(--success-color, #10b981);
-  box-shadow: 0 0 8px var(--success-color, #10b981);
+  background-color: var(--success-color);
+  box-shadow: 0 0 8px var(--success-color);
 }
 
-.app-status.running {
-  color: var(--success-color, #10b981);
+.app-status.pending, .app-status.disconnected { background: rgba(245, 158, 11, 0.1); }
+.app-status.pending .status-label, .app-status.disconnected .status-label { color: var(--warning-color); }
+.app-status.pending .status-dot, .app-status.disconnected .status-dot {
+  background-color: var(--warning-color);
+  box-shadow: 0 0 6px var(--warning-color);
 }
 
-.app-status.pending,
-.app-status.disconnected {
-  color: var(--warning-color, #f59e0b);
-}
-
-.app-status.pending .status-dot,
-.app-status.disconnected .status-dot {
-  background-color: var(--warning-color, #f59e0b);
-  box-shadow: 0 0 6px var(--warning-color, #f59e0b);
-}
-
-.app-status.stopped {
-  color: var(--error-color, #ef4444);
-}
-
-.app-status.stopped .status-dot {
-  background-color: var(--error-color, #ef4444);
-  box-shadow: 0 0 6px var(--error-color, #ef4444);
-}
-
-.app-status.failed {
-  color: var(--error-color, #ef4444);
-}
-
-.app-status.failed .status-dot {
-  background-color: var(--error-color, #ef4444);
-  box-shadow: 0 0 6px var(--error-color, #ef4444);
-}
-
-.app-status.crashed {
-  color: #f97316;
-}
-
-.app-status.crashed .status-dot {
-  background-color: #f97316;
-  box-shadow: 0 0 6px #f97316;
+.app-status.stopped, .app-status.failed { background: rgba(239, 68, 68, 0.1); }
+.app-status.stopped .status-label, .app-status.failed .status-label { color: var(--error-color); }
+.app-status.stopped .status-dot, .app-status.failed .status-dot {
+  background-color: var(--error-color);
+  box-shadow: 0 0 6px var(--error-color);
 }
 
 /* Window Controls */
 .window-controls {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   -webkit-app-region: no-drag;
 }
 
 .control-btn {
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: all var(--transition-fast);
 }
 
 .control-btn:hover {
@@ -510,14 +434,13 @@ onUnmounted(() => {
 
 .control-btn.close:hover {
   background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
+  color: var(--error-color);
 }
 
 /* Sidebar Styles */
 .app-sider {
-  background: var(--glass-bg) !important;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: transparent !important;
+  border-right: 1px solid var(--border-light);
   z-index: 100;
 }
 
@@ -525,7 +448,8 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 20px 16px;
+  padding: 20px 12px;
+  background: transparent;
 }
 
 /* Menu Styles */
@@ -537,30 +461,30 @@ onUnmounted(() => {
 .menu-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .menu-label {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   color: var(--text-tertiary);
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   padding: 0 12px;
-  margin-bottom: 8px;
+  margin: 12px 0 8px 0;
 }
 
 .menu-item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px;
-  border-radius: 12px;
+  gap: 12px;
+  padding: 0 14px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   color: var(--text-secondary);
-  transition: all 0.2s ease;
-  height: 48px;
+  transition: all var(--transition-fast);
+  height: 44px;
 }
 
 .menu-item:hover:not(.disabled) {
@@ -569,8 +493,9 @@ onUnmounted(() => {
 }
 
 .menu-item.active {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(99, 102, 241, 0.05));
+  background: var(--chip-bg);
   color: var(--primary-color);
+  font-weight: 600;
 }
 
 .menu-item.disabled {
@@ -585,71 +510,25 @@ onUnmounted(() => {
 }
 
 .menu-text {
-  font-weight: 500;
   font-size: 14px;
   white-space: nowrap;
 }
 
-.active-indicator {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 4px;
-  height: 20px;
-  background: var(--primary-color);
-  border-radius: 4px 0 0 4px;
-}
-
-/* Footer Styles */
-.sider-footer {
-  padding-top: 20px;
-  border-top: 1px solid var(--border-color);
-}
-
-.footer-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.action-btn {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-}
-
-.action-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
 /* Content Styles */
 .app-content {
-  background: var(--bg-primary);
+  background: transparent !important;
   position: relative;
 }
 
 .content-container {
   height: 100%;
-  /* padding-top: 40px; Removed as window controls are now in header */
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden; /* Page views manage their own scroll using page-shell */
 }
 
 /* Transitions */
 .fade-slide-enter-active,
 .fade-slide-leave-active {
-  transition: all 0.3s ease;
+  transition: all var(--transition-fast);
 }
 
 .fade-slide-enter-from,
@@ -660,18 +539,17 @@ onUnmounted(() => {
 
 .page-fade-enter-active,
 .page-fade-leave-active {
-  transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
+  transition: opacity var(--transition-normal), transform var(--transition-normal);
 }
 
 .page-fade-enter-from {
   opacity: 0;
-  transform: translateY(10px);
+  transform: translateY(12px) scale(0.99);
 }
 
 .page-fade-leave-to {
   opacity: 0;
-  transform: translateY(-10px);
+  transform: translateY(-12px) scale(0.99);
 }
 </style>
+

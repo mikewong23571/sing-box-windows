@@ -1,5 +1,5 @@
 <template>
-  <n-config-provider :theme="configProviderTheme" :theme-overrides="themeOverrides">
+  <n-config-provider :theme="configProviderTheme" :theme-overrides="themeOverrides" :locale="naiveLocale" :date-locale="naiveDateLocale">
     <n-global-style />
     <n-dialog-provider>
       <n-modal-provider>
@@ -30,7 +30,7 @@ import { computed, defineComponent, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import mitt from '@/utils/mitt'
-import { useMessage } from 'naive-ui'
+import { useMessage, zhCN, dateZhCN, enUS, dateEnUS, ruRU, dateRuRU, jaJP, dateJaJP } from 'naive-ui'
 
 import {
   useThemeStore,
@@ -76,6 +76,8 @@ const themeStore = useThemeStore()
 const appStore = useAppStore()
 const localeStore = useLocaleStore()
 const windowStore = useWindowStore()
+
+
 const subStore = useSubStore()
 const kernelStore = useKernelStore()
 const updateStore = useUpdateStore()
@@ -84,6 +86,26 @@ const connectionStore = useConnectionStore()
 const logStore = useLogStore()
 const configProviderTheme = computed(() => themeStore.naiveTheme)
 const themeOverrides = computed(() => themeStore.themeOverrides)
+
+const naiveLocale = computed(() => {
+  switch (localeStore.currentLocale) {
+    case 'zh-CN': return zhCN
+    case 'en-US': return enUS
+    case 'ru-RU': return ruRU
+    case 'ja-JP': return jaJP
+    default: return zhCN
+  }
+})
+
+const naiveDateLocale = computed(() => {
+  switch (localeStore.currentLocale) {
+    case 'zh-CN': return dateZhCN
+    case 'en-US': return dateEnUS
+    case 'ru-RU': return dateRuRU
+    case 'ja-JP': return dateJaJP
+    default: return dateZhCN
+  }
+})
 
 const cleanupFunctions: (() => void)[] = []
 let sudoPromptRunning = false

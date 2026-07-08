@@ -1,5 +1,5 @@
 <template>
-  <div class="page-container">
+  <div class="page-shell">
     <PageHeader :title="t('log.title')" :subtitle="t('log.subtitle')">
       <template #actions>
         <n-space>
@@ -13,105 +13,134 @@
       </template>
     </PageHeader>
 
-    <div class="toolbar-card">
-      <div class="toolbar-row">
-        <n-input v-model:value="logStore.searchQuery" :placeholder="t('log.searchLogs')" clearable>
-          <template #prefix>
-            <n-icon><SearchOutline /></n-icon>
-          </template>
-        </n-input>
-        <n-select
-          v-model:value="logStore.filterType"
-          clearable
-          :options="logTypeOptions"
-          :placeholder="t('log.filterType')"
-        />
-        <n-select
-          v-model:value="logStore.groupingKey"
-          clearable
-          :options="groupingOptions"
-          :placeholder="labels.grouping"
-        />
-        <n-select v-model:value="logStore.sortKey" :options="sortOptions" />
-        <n-button quaternary @click="logStore.sortDesc = !logStore.sortDesc">
-          <template #icon>
-            <n-icon>
-              <ArrowDownOutline v-if="logStore.sortDesc" />
-              <ArrowUpOutline v-else />
-            </n-icon>
-          </template>
-          {{ labels.sortOrder }}
-        </n-button>
-      </div>
+    <n-card size="small" class="toolbar-card">
+      <n-grid responsive="screen" item-responsive :x-gap="12" :y-gap="12" class="toolbar-row">
+        <n-grid-item span="24 m:12 l:6">
+          <n-input v-model:value="logStore.searchQuery" :placeholder="t('log.searchLogs')" clearable>
+            <template #prefix>
+              <n-icon><SearchOutline /></n-icon>
+            </template>
+          </n-input>
+        </n-grid-item>
+        <n-grid-item span="24 m:12 l:6">
+          <n-input-group>
+            <n-input-group-label>{{ t('log.level') }}</n-input-group-label>
+            <n-select
+              v-model:value="logStore.filterType"
+              clearable
+              :options="logTypeOptions"
+              :placeholder="t('common.all')"
+            />
+          </n-input-group>
+        </n-grid-item>
+        <n-grid-item span="24 m:12 l:6">
+          <n-input-group>
+            <n-input-group-label>{{ labels.grouping }}</n-input-group-label>
+            <n-select
+              v-model:value="logStore.groupingKey"
+              clearable
+              :options="groupingOptions"
+              :placeholder="t('common.all')"
+            />
+          </n-input-group>
+        </n-grid-item>
+        <n-grid-item span="24 m:12 l:6">
+          <n-flex wrap="nowrap" :size="8">
+            <n-input-group style="flex: 1">
+              <n-input-group-label>{{ t('common.sort') }}</n-input-group-label>
+              <n-select v-model:value="logStore.sortKey" :options="sortOptions" />
+            </n-input-group>
+            <n-button @click="logStore.sortDesc = !logStore.sortDesc">
+              <template #icon>
+                <n-icon>
+                  <ArrowDownOutline v-if="logStore.sortDesc" />
+                  <ArrowUpOutline v-else />
+                </n-icon>
+              </template>
+            </n-button>
+          </n-flex>
+        </n-grid-item>
+      </n-grid>
 
-      <div class="stats-row">
+      <n-space style="margin-top: 12px;">
         <n-tag size="small" round :bordered="false">{{ t('log.records') }}: {{ logStore.logs.length }}</n-tag>
-        <n-tag size="small" round :bordered="false" type="warning">{{ labels.filtered }}: {{ sortedLogs.length }}</n-tag>
-        <n-tag size="small" round :bordered="false" type="info">{{ labels.status }}: {{ logStore.paused ? labels.paused : labels.streaming }}</n-tag>
-      </div>
-    </div>
+        <n-tag size="small" round :bordered="false">{{ labels.filtered }}: {{ sortedLogs.length }}</n-tag>
+        <n-tag size="small" round :bordered="false">{{ labels.status }}: {{ logStore.paused ? labels.paused : labels.streaming }}</n-tag>
+      </n-space>
+    </n-card>
 
-    <div v-if="groupedLogs.length" class="logs-card">
-      <div class="log-table-wrap">
-        <table class="log-table">
-          <thead>
-            <tr>
-              <th>{{ t('log.sequence') }}</th>
-              <th>{{ t('log.level') }}</th>
-              <th>{{ t('log.time') }}</th>
-              <th>{{ t('log.content') }}</th>
-            </tr>
-          </thead>
-          <tbody v-for="group in groupedLogs" :key="group.key || 'all'">
-            <tr v-if="group.key" class="group-row">
-              <td colspan="4">
-                <div class="group-title">
-                  <span>{{ group.key }}</span>
-                  <n-tag size="tiny" round>{{ group.items.length }}</n-tag>
-                </div>
-              </td>
-            </tr>
-            <tr
-              v-for="log in group.items"
-              :key="log.seq"
-              class="log-row"
-              :class="log.type"
-              tabindex="0"
-              @click="selectedLog = log"
-              @keydown.enter="selectedLog = log"
-              @keydown.space.prevent="selectedLog = log"
-            >
-              <td>#{{ log.seq }}</td>
-              <td>
-                <n-tag size="small" round :bordered="false" :type="getLogTagType(log.type)">
-                  {{ log.type.toUpperCase() }}
-                </n-tag>
-              </td>
-              <td>{{ formatTime(log.timestamp) }}</td>
-              <td class="payload-cell" :title="log.payload">{{ log.payload }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <n-card v-if="groupedLogs.length" size="small" style="margin-top: 16px;" class="logs-card">
+      <n-table :bordered="false" :single-line="false" striped class="log-table">
+        <thead>
+          <tr>
+            <th style="width: 80px">{{ t('log.sequence') }}</th>
+            <th style="width: 100px">{{ t('log.level') }}</th>
+            <th style="width: 120px">{{ t('log.time') }}</th>
+            <th>{{ t('log.content') }}</th>
+          </tr>
+        </thead>
+        <tbody v-for="group in groupedLogs" :key="group.key || 'all'">
+          <tr v-if="group.key" class="group-row">
+            <td colspan="4">
+              <n-space align="center" size="small" class="group-title">
+                <n-text strong>{{ group.key }}</n-text>
+                <n-tag size="tiny" round>{{ group.items.length }}</n-tag>
+              </n-space>
+            </td>
+          </tr>
+          <tr
+            v-for="log in group.items"
+            :key="log.seq"
+            class="log-row"
+            :class="log.type"
+            tabindex="0"
+            @click="selectedLog = log"
+            @keydown.enter="selectedLog = log"
+            @keydown.space.prevent="selectedLog = log"
+            style="cursor: pointer;"
+          >
+            <td>#{{ log.seq }}</td>
+            <td>
+              <n-tag size="small" round :bordered="false" :type="getLogTagType(log.type)">
+                {{ log.type.toUpperCase() }}
+              </n-tag>
+            </td>
+            <td>{{ formatTime(log.timestamp) }}</td>
+            <td class="payload-cell">
+              <n-ellipsis :tooltip="false" style="max-width: 100%">
+                {{ log.payload }}
+              </n-ellipsis>
+            </td>
+          </tr>
+        </tbody>
+      </n-table>
+    </n-card>
 
-    <div v-else class="empty-state">
-      <div class="empty-icon">
-        <n-icon size="48"><DocumentTextOutline /></n-icon>
-      </div>
-      <h3 class="empty-title">{{ t('log.noLogs') }}</h3>
-    </div>
+    <n-empty v-else size="huge" :description="t('log.noLogs')" style="margin-top: 48px;">
+      <template #icon>
+        <n-icon><DocumentTextOutline /></n-icon>
+      </template>
+    </n-empty>
 
-    <n-modal v-model:show="detailVisible" preset="card" :title="t('log.detailTitle')" style="width: 720px">
-      <div v-if="selectedLog" class="detail-grid">
-        <div><strong>{{ t('log.sequence') }}</strong><span>#{{ selectedLog.seq }}</span></div>
-        <div><strong>{{ t('log.level') }}</strong><span>{{ selectedLog.type.toUpperCase() }}</span></div>
-        <div><strong>{{ t('log.time') }}</strong><span>{{ formatTime(selectedLog.timestamp) }}</span></div>
-        <div class="detail-payload">
-          <strong>{{ t('log.content') }}</strong>
-          <span>{{ selectedLog.payload }}</span>
-        </div>
-      </div>
+    <n-modal v-model:show="detailVisible" preset="card" :title="t('log.detailTitle')" style="width: 720px" :bordered="false">
+      <n-descriptions v-if="selectedLog" label-placement="left" :column="1" size="small">
+        <n-descriptions-item :label="t('log.sequence')">
+          #{{ selectedLog.seq }}
+        </n-descriptions-item>
+        <n-descriptions-item :label="t('log.level')">
+          <n-tag size="small" round :bordered="false" :type="getLogTagType(selectedLog.type)">
+            {{ selectedLog.type.toUpperCase() }}
+          </n-tag>
+        </n-descriptions-item>
+        <n-descriptions-item :label="t('log.time')">
+          {{ formatTime(selectedLog.timestamp) }}
+        </n-descriptions-item>
+        <n-descriptions-item :label="t('log.content')">
+          <div style="background: rgba(128, 128, 128, 0.1); padding: 12px; border-radius: 8px; margin-top: 4px;">
+            <n-text style="word-break: break-all; white-space: pre-wrap; font-family: monospace;">{{ selectedLog.payload }}</n-text>
+          </div>
+        </n-descriptions-item>
+      </n-descriptions>
     </n-modal>
   </div>
 </template>
@@ -258,21 +287,21 @@ const formatDate = (timestamp: number) => new Date(timestamp).toLocaleDateString
 </script>
 
 <style scoped>
-.page-container {
-  padding: var(--layout-page-padding-y, 16px) var(--layout-page-padding-x, 24px);
-  max-width: var(--layout-page-max-width, 1400px);
-  margin: 0 auto;
+.page-shell {
   display: flex;
   flex-direction: column;
   gap: var(--layout-page-gap, 16px);
+  height: 100%;
 }
 
 .toolbar-card,
 .logs-card {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 16px;
-  padding: 16px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: 0 4px 24px -6px rgba(0, 0, 0, 0.05);
 }
 
 .toolbar-row {

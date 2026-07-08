@@ -1,26 +1,24 @@
 <template>
-  <div class="home-page">
-    <div class="hero-section" :class="statusClass">
-      <div class="hero-bg-glow"></div>
-      <div class="hero-content">
-        <div class="hero-row-top">
-          <div class="hero-left">
-            <div class="hero-status-dot"></div>
-            <div class="hero-info">
-              <div class="hero-title-row">
-                <h2 class="hero-title">{{ statusTitle }}</h2>
-                <span class="hero-speed-item">
-                  <span class="meta-arrow up">↑</span>
-                  {{ formatSpeed(trafficStore.traffic.up) }}
-                </span>
-                <span class="hero-speed-item">
-                  <span class="meta-arrow down">↓</span>
-                  {{ formatSpeed(trafficStore.traffic.down) }}
-                </span>
-              </div>
-            </div>
-          </div>
-          <div class="hero-actions">
+  <div class="page-shell">
+    <n-flex vertical size="large">
+      <!-- Hero Section -->
+      <n-card class="page-hero" :class="statusClass">
+        <n-flex justify="space-between" align="center">
+          <n-flex align="center" :size="16">
+            <n-icon size="48" :class="{ 'pulse-active': kernelRunning }" :type="kernelRunning ? 'primary' : 'default'">
+              <PlanetOutline v-if="kernelRunning" />
+              <CloudOfflineOutline v-else />
+            </n-icon>
+            <n-flex vertical :size="0">
+              <n-text style="font-size: 24px; font-weight: bold;">{{ statusTitle }}</n-text>
+              <n-space align="center" :size="8">
+                <span class="status-dot" :class="{ 'running': kernelRunning }"></span>
+                <n-text depth="3">{{ appStatusLabel }}</n-text>
+              </n-space>
+            </n-flex>
+          </n-flex>
+          
+          <n-space>
             <n-button
               :type="kernelRunning ? 'error' : 'primary'"
               size="large"
@@ -33,6 +31,7 @@
               </template>
               {{ t('home.restart') }}
             </n-button>
+            
             <n-tooltip v-if="isWindowsPlatform && !isAdmin" trigger="hover">
               <template #trigger>
                 <n-button
@@ -49,139 +48,157 @@
               </template>
               {{ t('home.restartAsAdmin') }}
             </n-tooltip>
-          </div>
-        </div>
+          </n-space>
+        </n-flex>
 
-        <div class="hero-row-stats" v-if="kernelRunning">
-          <div class="hero-stat">
-            <span class="hero-stat-label">HTTP</span>
-            <code class="hero-stat-value">{{ proxyAddress }}</code>
-          </div>
-          <div class="hero-stat-sep"></div>
-          <div class="hero-stat">
-            <span class="hero-stat-label">SOCKS5</span>
-            <code class="hero-stat-value">{{ proxyAddress }}</code>
-          </div>
-          <div class="hero-stat-sep"></div>
-          <div class="hero-stat">
-            <span class="hero-stat-label">{{ t('nav.connections') }}</span>
-            <code class="hero-stat-value">{{ connectionStore.connections.length }}</code>
-          </div>
-          <div class="hero-stat-sep"></div>
-          <div class="hero-stat">
-            <span class="hero-stat-label">{{ t('proxy.title') }}</span>
-            <code class="hero-stat-value">{{ currentNodeProxyMode === 'global' ? t('home.nodeMode.global') : t('home.nodeMode.rule') }}</code>
-          </div>
-          <div class="hero-stat-sep"></div>
-          <div class="hero-stat">
-            <span class="hero-stat-label">{{ t('home.traffic.total') }}</span>
-            <code class="hero-stat-value">{{ formatBytes(trafficStore.traffic.totalUp + trafficStore.traffic.totalDown) }}</code>
-          </div>
-        </div>
-      </div>
-    </div>
+        <!-- Quick Stats in Hero (Only visible when running) -->
+        <n-grid v-if="kernelRunning" responsive="screen" cols="1 s:2 m:3" :x-gap="16" :y-gap="16" style="margin-top: 24px;">
+          <n-grid-item>
+            <n-card size="small">
+              <n-statistic :label="t('home.traffic.up') + ' / ' + t('home.traffic.down')">
+                <template #prefix>
+                  <n-icon color="#2080f0"><SwapVerticalOutline /></n-icon>
+                </template>
+                <n-text style="font-size: 16px;">
+                  {{ formatSpeed(trafficStore.traffic.up) }} / {{ formatSpeed(trafficStore.traffic.down) }}
+                </n-text>
+              </n-statistic>
+            </n-card>
+          </n-grid-item>
+          
+          <n-grid-item>
+            <n-card size="small">
+              <n-statistic :label="t('nav.connections')" :value="connectionStore.connections.length">
+                <template #prefix>
+                  <n-icon color="#d03050"><GitNetworkOutline /></n-icon>
+                </template>
+              </n-statistic>
+            </n-card>
+          </n-grid-item>
 
-    <n-alert
-      v-if="kernelStore.startupDiagnosis"
-      type="error"
-      class="diagnosis-alert"
-      :title="kernelStore.startupDiagnosis.message"
-    >
-      <div class="diagnosis-body">
-        <div class="diagnosis-meta">
-          <n-tag size="small" type="error">{{ kernelStore.startupDiagnosis.stage }}</n-tag>
-          <n-tag size="small">{{ kernelStore.startupDiagnosis.kind }}</n-tag>
-        </div>
-        <div class="diagnosis-detail">{{ kernelStore.startupDiagnosis.detail }}</div>
-        <ul
-          v-if="kernelStore.startupDiagnosis.suggested_actions?.length"
-          class="diagnosis-actions"
-        >
-          <li v-for="action in kernelStore.startupDiagnosis.suggested_actions" :key="action">
-            {{ action }}
-          </li>
-        </ul>
-      </div>
-    </n-alert>
+          <n-grid-item>
+            <n-card size="small">
+              <n-statistic :label="t('proxy.title')">
+                <template #prefix>
+                  <n-icon color="#8a2be2"><GlobeOutline /></n-icon>
+                </template>
+                <n-text style="font-size: 16px;">
+                  {{ currentNodeProxyMode === 'global' ? t('home.nodeMode.global') : t('home.nodeMode.rule') }}
+                </n-text>
+              </n-statistic>
+            </n-card>
+          </n-grid-item>
+        </n-grid>
+      </n-card>
 
-    <div class="main-grid">
-      <div class="chart-panel">
-        <TrafficChart
-          :upload-speed="trafficStore.traffic.up"
-          :download-speed="trafficStore.traffic.down"
-        />
-      </div>
+      <!-- Error Alerts -->
+      <n-alert
+        v-if="kernelStore.startupDiagnosis"
+        type="error"
+        :title="kernelStore.startupDiagnosis.message"
+      >
+        <n-flex vertical size="small">
+          <n-space>
+            <n-tag size="small" type="error">{{ kernelStore.startupDiagnosis.stage }}</n-tag>
+            <n-tag size="small">{{ kernelStore.startupDiagnosis.kind }}</n-tag>
+          </n-space>
+          <n-text>{{ kernelStore.startupDiagnosis.detail }}</n-text>
+          <ul
+            v-if="kernelStore.startupDiagnosis.suggested_actions?.length"
+            style="margin: 0; padding-left: 20px;"
+          >
+            <li v-for="action in kernelStore.startupDiagnosis.suggested_actions" :key="action">
+              {{ action }}
+            </li>
+          </ul>
+        </n-flex>
+      </n-alert>
 
-      <div class="side-panels">
-        <div class="mode-panel">
-          <div class="panel-header">
-            <span class="panel-title">{{ t('home.proxyHeader.flowMode') }}</span>
-            <n-button size="tiny" quaternary @click="showPortModal = true">
-              {{ t('common.edit') }}
-            </n-button>
-          </div>
-          <div class="toggle-list">
-            <div class="toggle-item" :class="{ active: systemProxyEnabled }">
-              <div class="toggle-icon">
-                <n-icon :size="18"><GlobeOutline /></n-icon>
+      <!-- Main Content Grid -->
+      <n-grid responsive="screen" cols="1 l:3" :x-gap="24" :y-gap="24">
+        <!-- Traffic Chart -->
+        <n-grid-item span="1 l:2">
+          <n-card :title="t('home.traffic.total') + ': ' + formatBytes(trafficStore.traffic.totalUp + trafficStore.traffic.totalDown)">
+            <template #header-extra>
+              <div style="display: flex; gap: 16px; font-size: 12px; font-weight: 600; align-items: center; color: var(--text-primary);">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <div style="width: 8px; height: 8px; border-radius: 50%; background-color: var(--success-color); box-shadow: 0 0 8px var(--success-color);"></div>
+                  <span>{{ t('home.traffic.uploadSpeed') }}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <div style="width: 8px; height: 8px; border-radius: 50%; background-color: var(--primary-color); box-shadow: 0 0 8px var(--primary-color);"></div>
+                  <span>{{ t('home.traffic.downloadSpeed') }}</span>
+                </div>
               </div>
-              <div class="toggle-info">
-                <span class="toggle-name">{{ t('home.proxyMode.system') }}</span>
-                <code class="toggle-port">{{ proxyAddress }}</code>
-              </div>
-              <n-switch :value="systemProxyEnabled" size="small" :disabled="modeSwitchPending" @update:value="(v: boolean) => toggleSystemProxy(v)" />
-            </div>
-            <div class="toggle-item" :class="{ active: tunProxyEnabled }">
-              <div class="toggle-icon">
-                <n-icon :size="18"><FlashOutline /></n-icon>
-              </div>
-              <div class="toggle-info">
-                <span class="toggle-name">{{ t('home.proxyMode.tun') }}</span>
-                <span class="toggle-desc">{{ t('home.proxyMode.tunTip') }}</span>
-              </div>
-              <n-switch :value="tunProxyEnabled" size="small" :disabled="modeSwitchPending" @update:value="(v: boolean) => toggleTunProxy(v)" />
-            </div>
-          </div>
-        </div>
+            </template>
+            <TrafficChart
+              :upload-speed="trafficStore.traffic.up"
+              :download-speed="trafficStore.traffic.down"
+            />
+          </n-card>
+        </n-grid-item>
 
-        <div class="proxy-mode-panel">
-          <div class="panel-header">
-            <span class="panel-title">{{ t('home.proxyHeader.nodeMode') }}</span>
-          </div>
-          <div class="mode-chips">
-            <div
-              v-for="mode in nodeProxyModes"
-              :key="mode.value"
-              class="mode-chip"
-              :class="{ active: currentNodeProxyMode === mode.value }"
-              @click="handleNodeProxyModeChange(mode.value)"
-            >
-              <n-icon :size="15"><component :is="mode.icon" /></n-icon>
-              <span>{{ t(mode.nameKey) }}</span>
-            </div>
-          </div>
-        </div>
+        <!-- Controls & Toggles Sidebar -->
+        <n-grid-item span="1 l:1">
+          <n-flex vertical size="large">
+            <!-- Flow Mode Panel -->
+            <n-card>
+              <template #header>
+                <n-flex justify="space-between" align="center">
+                  <span>{{ t('home.proxyHeader.flowMode') }}</span>
+                  <n-button size="small" secondary round type="primary" @click="showPortModal = true">
+                    <template #icon><n-icon><SettingsOutline/></n-icon></template>
+                    {{ t('common.edit') }}
+                  </n-button>
+                </n-flex>
+              </template>
+              
+              <n-flex vertical size="large">
+                <n-flex justify="space-between" align="center" :wrap="false">
+                  <n-flex align="center" :size="12" :wrap="false">
+                    <n-icon size="24"><DesktopOutline /></n-icon>
+                    <n-flex vertical :size="0">
+                      <n-text strong>{{ t('home.proxyMode.system') }}</n-text>
+                      <n-text depth="3" style="font-size: 12px; min-height: 18px;">{{ proxyAddress || t('common.disabled') }}</n-text>
+                    </n-flex>
+                  </n-flex>
+                  <n-switch :value="systemProxyEnabled" :disabled="modeSwitchPending" @update:value="(v: boolean) => toggleSystemProxy(v)" />
+                </n-flex>
+                
+                <n-flex justify="space-between" align="center" :wrap="false">
+                  <n-flex align="center" :size="12" :wrap="false">
+                    <n-icon size="24"><FlashOutline /></n-icon>
+                    <n-flex vertical :size="0">
+                      <n-text strong>{{ t('home.proxyMode.tun') }}</n-text>
+                      <n-text depth="3" style="font-size: 12px; min-height: 18px;">{{ t('home.proxyMode.tunTip') }}</n-text>
+                    </n-flex>
+                  </n-flex>
+                  <n-switch :value="tunProxyEnabled" :disabled="modeSwitchPending" @update:value="(v: boolean) => toggleTunProxy(v)" />
+                </n-flex>
+              </n-flex>
+            </n-card>
 
-        <div class="traffic-info">
-          <div class="traffic-row">
-            <span class="traffic-label">
-              <span class="traffic-dot upload"></span>
-              {{ t('home.traffic.up') }}
-            </span>
-            <span class="traffic-val">{{ formatBytes(trafficStore.traffic.totalUp) }}</span>
-          </div>
-          <div class="traffic-divider"></div>
-          <div class="traffic-row">
-            <span class="traffic-label">
-              <span class="traffic-dot download"></span>
-              {{ t('home.traffic.down') }}
-            </span>
-            <span class="traffic-val">{{ formatBytes(trafficStore.traffic.totalDown) }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
+            <!-- Node Mode Panel -->
+            <n-card :title="t('home.proxyHeader.nodeMode')">
+              <n-tabs type="segment" :value="currentNodeProxyMode" @update:value="handleNodeProxyModeChange">
+                <n-tab
+                  v-for="mode in nodeProxyModes"
+                  :key="mode.value"
+                  :name="mode.value"
+                >
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <n-icon :size="18" style="display: flex;"><component :is="mode.icon" /></n-icon>
+                    <span style="line-height: 1;">{{ t(mode.nameKey) }}</span>
+                  </div>
+                </n-tab>
+              </n-tabs>
+            </n-card>
+          </n-flex>
+        </n-grid-item>
+      </n-grid>
+    </n-flex>
 
+    <!-- Modals -->
     <PortSettingsDialog v-model:show="showPortModal" />
   </div>
 </template>
@@ -196,6 +213,12 @@ import {
   GlobeOutline,
   FlashOutline,
   RadioOutline,
+  PlanetOutline,
+  CloudOfflineOutline,
+  SwapVerticalOutline,
+  GitNetworkOutline,
+  SettingsOutline,
+  DesktopOutline
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores'
 import { useKernelStore } from '@/stores/kernel/KernelStore'
@@ -243,6 +266,25 @@ const isWindowsPlatform = computed(() => platform.value === 'windows')
 const isUnixPlatform = computed(() => platform.value === 'linux' || platform.value === 'macos')
 
 const statusTitle = computed(() => {
+  switch (statusState.value) {
+    case 'starting':
+      return t('status.starting')
+    case 'stopping':
+      return t('status.stopping')
+    case 'running':
+      return t('status.running')
+    case 'disconnected':
+      return t('status.disconnected')
+    case 'failed':
+      return t('status.failed')
+    case 'crashed':
+      return t('status.crashed')
+    default:
+      return t('status.stopped')
+  }
+})
+
+const appStatusLabel = computed(() => {
   switch (statusState.value) {
     case 'starting':
       return t('status.starting')
@@ -560,221 +602,222 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.home-page {
-  padding: var(--layout-page-padding-y, 16px) var(--layout-page-padding-x, 24px);
-  max-width: var(--layout-page-max-width, 1200px);
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+/* State-specific Hero Styling */
+.page-hero.running .hero-icon {
+  background: linear-gradient(135deg, #10b981, #34d399);
+  box-shadow: 0 12px 24px -8px rgba(16, 185, 129, 0.5);
 }
 
-.hero-section {
-  position: relative;
-  border-radius: 20px;
-  padding: 24px 28px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  overflow: hidden;
+.page-hero.pending .hero-icon,
+.page-hero.disconnected .hero-icon {
+  background: linear-gradient(135deg, #f59e0b, #fbbf24);
+  box-shadow: 0 12px 24px -8px rgba(245, 158, 11, 0.5);
 }
 
-.hero-bg-glow {
-  position: absolute;
-  top: -40px;
-  right: -40px;
-  width: 200px;
-  height: 200px;
-  border-radius: 50%;
-  opacity: 0;
-  transition: opacity 0.5s ease;
-  pointer-events: none;
+.page-hero.stopped .hero-icon,
+.page-hero.failed .hero-icon {
+  background: linear-gradient(135deg, #ef4444, #f87171);
+  box-shadow: 0 12px 24px -8px rgba(239, 68, 68, 0.5);
 }
 
-.hero-section.running .hero-bg-glow {
-  background: radial-gradient(circle, rgba(16, 185, 129, 0.12), transparent 70%);
-  opacity: 1;
+.page-hero.crashed .hero-icon {
+  background: linear-gradient(135deg, #f97316, #fb923c);
+  box-shadow: 0 12px 24px -8px rgba(249, 115, 22, 0.5);
 }
 
-.hero-section.failed .hero-bg-glow,
-.hero-section.stopped .hero-bg-glow {
-  background: radial-gradient(circle, rgba(239, 68, 68, 0.08), transparent 70%);
-  opacity: 1;
+/* Animations */
+@keyframes pulse-icon {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+  70% { transform: scale(1.05); box-shadow: 0 0 0 15px rgba(16, 185, 129, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
 
-.hero-section.pending .hero-bg-glow,
-.hero-section.disconnected .hero-bg-glow {
-  background: radial-gradient(circle, rgba(245, 158, 11, 0.08), transparent 70%);
-  opacity: 1;
+.pulse-active {
+  animation: pulse-icon 3s infinite ease-in-out;
 }
 
-.hero-content {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.hero-row-top {
-  display: flex;
+/* Status Indicator */
+.status-indicator {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
+  font-weight: 500;
+  padding: 4px 12px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-full);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+
+.running .status-dot { background: var(--success-color); box-shadow: 0 0 8px var(--success-color); }
+.pending .status-dot, .disconnected .status-dot { background: var(--warning-color); box-shadow: 0 0 8px var(--warning-color); }
+.stopped .status-dot, .failed .status-dot, .crashed .status-dot { background: var(--error-color); box-shadow: 0 0 8px var(--error-color); }
+
+.speed-separator {
+  color: var(--text-tertiary);
+  margin: 0 4px;
+  font-weight: 400;
+}
+
+/* Main Grid Layout */
+.main-grid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 24px;
+  min-height: 0;
+}
+
+.chart-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+}
+
+.chart-wrapper {
+  flex: 1;
+  min-height: 200px;
+  margin-top: 16px;
+  position: relative;
+}
+
+.side-panels {
+  display: flex;
+  flex-direction: column;
   gap: 20px;
 }
 
-.hero-left {
+/* Panel Header Utilities */
+.panel-header {
   display: flex;
   align-items: center;
-  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 20px;
 }
 
-.hero-status-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--text-tertiary);
-  flex-shrink: 0;
-  transition: all 0.4s ease;
+.panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
 }
 
-.hero-section.running .hero-status-dot {
-  background: #10b981;
-  box-shadow: 0 0 16px rgba(16, 185, 129, 0.5), 0 0 4px rgba(16, 185, 129, 0.8);
-  animation: pulse-green 2s ease-in-out infinite;
-}
-
-.hero-section.pending .hero-status-dot,
-.hero-section.disconnected .hero-status-dot {
-  background: #f59e0b;
-  box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
-}
-
-.hero-section.stopped .hero-status-dot,
-.hero-section.failed .hero-status-dot {
-  background: #ef4444;
-  box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
-}
-
-.hero-section.crashed .hero-status-dot {
-  background: #f97316;
-  box-shadow: 0 0 12px rgba(249, 115, 22, 0.4);
-}
-
-@keyframes pulse-green {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-
-.hero-info {
+/* List Controls (System Proxy / Tun) */
+.control-list {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 12px;
 }
 
-.hero-title-row {
+.control-item {
   display: flex;
-  align-items: baseline;
-  gap: 16px;
-}
-
-.hero-title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: -0.02em;
-}
-
-.hero-section.running .hero-title {
-  color: #10b981;
-}
-
-.hero-section.failed .hero-title,
-.hero-section.stopped .hero-title {
-  color: #ef4444;
-}
-
-.hero-speed-item {
-  display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 13px;
+  gap: 14px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  border: 1px solid transparent;
+  transition: all var(--transition-normal);
+}
+
+.control-item:hover {
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
+}
+
+.control-item.active {
+  background: var(--bg-primary);
+  border-color: var(--primary-color);
+  box-shadow: 0 4px 12px -2px rgba(99, 102, 241, 0.1);
+}
+
+.control-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all var(--transition-normal);
+}
+
+.control-item.active .control-icon {
+  background: linear-gradient(135deg, var(--primary-color), #818cf8);
+  color: white;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+}
+
+.control-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.control-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.control-desc {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+
+/* Segmented Control (Node Mode) */
+.segmented-control {
+  display: flex;
+  background: var(--bg-tertiary);
+  padding: 4px;
+  border-radius: var(--radius-md);
+  gap: 4px;
+}
+
+.segment {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: all var(--transition-fast);
 }
 
-.meta-arrow {
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.meta-arrow.up {
-  color: #10b981;
-}
-
-.meta-arrow.down {
-  color: var(--primary-color);
-}
-
-.meta-dot {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--text-tertiary);
-}
-
-.hero-actions {
-  display: flex;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.hero-row-stats {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: var(--bg-tertiary);
-  flex-wrap: wrap;
-}
-
-.hero-stat {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.hero-stat-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.hero-stat-value {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-  font-size: 12px;
-  font-weight: 600;
+.segment:hover {
   color: var(--text-primary);
 }
 
-.hero-stat-sep {
-  width: 1px;
-  height: 14px;
-  background: var(--border-color);
-  flex-shrink: 0;
+.segment.active {
+  background: var(--bg-primary);
+  color: var(--primary-color);
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.1);
 }
 
+/* Alert styling */
 .diagnosis-alert {
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
 }
 
 .diagnosis-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .diagnosis-meta {
@@ -790,212 +833,12 @@ onMounted(async () => {
 
 .diagnosis-actions {
   margin: 0;
-  padding-left: 18px;
+  padding-left: 20px;
 }
 
-.main-grid {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 16px;
-  min-height: 0;
-}
-
-.chart-panel {
-  min-height: 280px;
-  border-radius: 16px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  overflow: hidden;
-  padding: 14px;
-}
-
-.side-panels {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.mode-panel,
-.proxy-mode-panel {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 14px;
-  padding: 14px 16px;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.panel-title {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-tertiary);
-}
-
-.toggle-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.toggle-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--bg-tertiary);
-  transition: all 0.2s ease;
-}
-
-.toggle-item.active {
-  background: rgba(99, 102, 241, 0.06);
-}
-
-.toggle-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  flex-shrink: 0;
-}
-
-.toggle-item.active .toggle-icon {
-  background: var(--primary-color);
-  color: white;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
-}
-
-.toggle-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.toggle-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.toggle-desc,
-.toggle-port {
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
-
-.toggle-port {
-  font-family: 'SFMono-Regular', Consolas, monospace;
-}
-
-.mode-chips {
-  display: flex;
-  gap: 8px;
-}
-
-.mode-chip {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--bg-tertiary);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.mode-chip:hover {
-  color: var(--text-primary);
-}
-
-.mode-chip.active {
-  background: var(--primary-color);
-  color: white;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
-}
-
-.traffic-info {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 14px;
-  padding: 10px 16px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.traffic-divider {
-  width: 1px;
-  height: 14px;
-  background: var(--border-color);
-  flex-shrink: 0;
-}
-
-.traffic-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-}
-
-.traffic-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.traffic-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.traffic-dot.upload {
-  background: #10b981;
-}
-
-.traffic-dot.download {
-  background: var(--primary-color);
-}
-
-.traffic-val {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-@media (max-width: 900px) {
+@media (max-width: 1024px) {
   .main-grid {
     grid-template-columns: 1fr;
-  }
-
-  .chart-panel {
-    min-height: 200px;
-  }
-
-  .hero-content {
-    flex-direction: column;
-    align-items: flex-start;
   }
 }
 </style>

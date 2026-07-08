@@ -1,220 +1,192 @@
 <template>
-  <div class="page-container">
+  <div class="page-shell">
     <PageHeader :title="t('rules.title')" :subtitle="t('rules.subtitle')">
       <template #actions>
         <n-space>
           <n-button secondary @click="refreshAll">
-            <template #icon>
-              <n-icon><RefreshOutline /></n-icon>
-            </template>
+            <template #icon><n-icon><RefreshOutline /></n-icon></template>
             {{ t('common.refresh') }}
           </n-button>
-          <n-button
-            v-if="activeTab === 'providers'"
-            type="primary"
-            secondary
-            :loading="bulkUpdating"
-            @click="updateAllProviders"
-          >
-            {{ providerLabels.updateAll }}
+
+          <n-button v-if="activeTab === 'providers'" type="primary" secondary :loading="bulkUpdating" @click="updateAllProviders">
+            {{ t('rules.updateAll') }}
           </n-button>
-          <n-button
-            v-if="activeTab === 'custom'"
-            type="primary"
-            secondary
-            @click="openCreateCustomRule"
-          >
-            <template #icon>
-              <n-icon><AddOutline /></n-icon>
-            </template>
-            {{ customLabels.add }}
+
+          <n-button v-if="activeTab === 'custom'" type="primary" secondary @click="openCreateCustomRule">
+            <template #icon><n-icon><AddOutline /></n-icon></template>
+            {{ t('rules.custom.add') }}
           </n-button>
         </n-space>
       </template>
     </PageHeader>
 
-    <div class="toolbar-card">
-      <n-tabs v-model:value="activeTab" type="segment" size="small">
-        <n-tab-pane name="rules" :tab="providerLabels.rulesTab" />
-        <n-tab-pane name="providers" :tab="providerLabels.providersTab" />
-        <n-tab-pane name="custom" :tab="customLabels.tab" />
-      </n-tabs>
+    <n-tabs v-model:value="activeTab" type="segment" size="small" style="margin-bottom: 16px; width: 320px;">
+      <n-tab-pane name="rules" :tab="t('rules.rulesTab')" />
+      <n-tab-pane name="providers" :tab="t('rules.providersTab')" />
+      <n-tab-pane name="custom" :tab="t('rules.custom.tab')" />
+    </n-tabs>
 
-      <div class="toolbar-row">
-        <n-input v-model:value="searchQuery" :placeholder="t('rules.searchPlaceholder')" clearable>
-          <template #prefix>
-            <n-icon><SearchOutline /></n-icon>
-          </template>
-        </n-input>
+    <n-card v-if="activeTab !== 'custom'" size="small" class="toolbar-card">
+      <n-grid responsive="screen" cols="1 m:2" :x-gap="16" :y-gap="16">
+        <n-grid-item>
+          <n-input v-model:value="searchQuery" :placeholder="t('rules.searchPlaceholder')" clearable>
+            <template #prefix><n-icon><SearchOutline /></n-icon></template>
+          </n-input>
+        </n-grid-item>
 
-        <n-select
-          v-if="activeTab === 'rules'"
-          v-model:value="typeFilter"
-          :options="typeOptions"
-          clearable
-          :placeholder="t('rules.type')"
-        />
-      </div>
-    </div>
+        <n-grid-item v-if="activeTab === 'rules'">
+          <n-select v-model:value="typeFilter" :options="typeOptions" clearable :placeholder="t('rules.type')" />
+        </n-grid-item>
+      </n-grid>
+    </n-card>
 
-    <div v-if="activeTab === 'rules'" class="card-list">
-      <div v-if="filteredRules.length" class="rules-grid">
-        <div v-for="rule in filteredRules" :key="rule.index" class="rule-card">
-          <div class="rule-head">
-            <div class="rule-meta">
-              <n-tag round size="small" :bordered="false">{{ rule.type }}</n-tag>
-              <n-tag v-if="typeof rule.index === 'number'" size="small" round>{{ rule.index }}</n-tag>
-            </div>
-            <n-switch
-              :value="!rule.extra?.disabled"
-              :loading="typeof rule.index === 'number' ? rulesStore.ruleUpdatingMap[rule.index] : false"
-              @update:value="toggleRule(rule)"
-            />
-          </div>
-          <div class="rule-payload">{{ rule.payload || '-' }}</div>
-          <div class="rule-footer">
-            <span>{{ t('rules.targetProxy') }}: {{ getProxyLabel(rule.proxy) }}</span>
-            <n-tag
-              size="small"
-              round
-              :bordered="false"
-              :type="rule.extra?.disabled ? 'warning' : 'success'"
-            >
-              {{ rule.extra?.disabled ? providerLabels.disabled : providerLabels.enabled }}
-            </n-tag>
-          </div>
-        </div>
-      </div>
+    <n-flex v-if="activeTab === 'rules'" vertical style="margin-top: 24px;" class="card-list">
+      <n-list v-if="filteredRules.length" hoverable class="rules-list" :show-divider="true">
+        <n-list-item v-for="rule in filteredRules" :key="rule.index" style="padding: 12px 16px;">
+          <n-flex justify="space-between" align="center" :wrap="false">
+            <!-- Left Info -->
+            <n-flex align="center" :wrap="false" style="flex: 1; overflow: hidden; min-width: 0;">
+              <n-text depth="3" style="width: 40px; text-align: center;">{{ typeof rule.index === 'number' ? rule.index : '-' }}</n-text>
+              <n-tag round size="small" :bordered="false" style="min-width: 80px; justify-content: center;">{{ rule.type }}</n-tag>
+              <n-ellipsis :tooltip="true" style="flex: 1; margin-left: 12px;">
+                <n-text>{{ rule.payload || '*' }}</n-text>
+              </n-ellipsis>
+            </n-flex>
+            
+            <!-- Right Actions -->
+            <n-flex align="center" :wrap="false" style="min-width: 240px; justify-content: flex-end;">
+              <n-text depth="3" style="font-size: 13px; margin-right: 12px;">{{ getProxyLabel(rule.proxy) }}</n-text>
+              <n-switch
+                size="small"
+                :value="!rule.extra?.disabled"
+                :loading="typeof rule.index === 'number' ? rulesStore.ruleUpdatingMap[rule.index] : false"
+                @update:value="toggleRule(rule)"
+              />
+            </n-flex>
+          </n-flex>
+        </n-list-item>
+      </n-list>
 
-      <div v-else class="empty-state">
-        <div class="empty-icon">
-          <n-icon size="48"><FilterOutline /></n-icon>
-        </div>
-        <h3 class="empty-title">{{ t('rules.noRulesData') }}</h3>
-      </div>
-    </div>
+      <n-empty v-else size="huge" :description="t('rules.noRulesData')" style="margin-top: 48px;">
+        <template #icon><n-icon><FilterOutline /></n-icon></template>
+      </n-empty>
+    </n-flex>
 
-    <div v-else class="card-list">
-      <div v-if="filteredProviders.length" class="providers-grid">
-        <div v-for="provider in filteredProviders" :key="provider.name" class="provider-card">
-          <div class="provider-head">
-            <div>
-              <div class="provider-name">{{ provider.name }}</div>
-              <div class="provider-meta">
-                {{ provider.behavior || '-' }} · {{ provider.vehicleType || '-' }}
-              </div>
-            </div>
-            <n-button
-              size="small"
-              secondary
-              :loading="rulesStore.providerUpdatingMap[provider.name]"
-              @click="updateProvider(provider.name)"
-            >
-              {{ t('common.refresh') }}
-            </n-button>
-          </div>
-          <div class="provider-row">
-            <span>{{ providerLabels.count }}</span>
-            <strong>{{ provider.count ?? '-' }}</strong>
-          </div>
-          <div class="provider-row">
-            <span>{{ providerLabels.updatedAt }}</span>
-            <strong>{{ formatProviderTime(provider.updatedAt || provider.updateAt) }}</strong>
-          </div>
-        </div>
-      </div>
+    <n-flex v-else-if="activeTab === 'providers'" vertical style="margin-top: 24px;" class="card-list">
+      <n-grid v-if="filteredProviders.length" responsive="screen" cols="1 s:2 m:3 l:4 xl:5" :x-gap="12" :y-gap="12" class="providers-grid">
+        <n-grid-item v-for="provider in filteredProviders" :key="provider.name">
+          <n-card hoverable size="small" class="provider-card">
+            <template #header>
+              <n-flex justify="space-between" align="center">
+                <n-flex vertical :size="0">
+                  <n-text strong>{{ provider.name }}</n-text>
+                  <n-text depth="3" style="font-size: 12px;">{{ provider.behavior || '-' }} · {{ provider.vehicleType || '-' }}</n-text>
+                </n-flex>
+                <n-button
+                  size="small"
+                  secondary
+                  :loading="rulesStore.providerUpdatingMap[provider.name]"
+                  @click="updateProvider(provider.name)"
+                >
+                  {{ t('common.refresh') }}
+                </n-button>
+              </n-flex>
+            </template>
+            <n-flex vertical size="small">
+              <n-flex justify="space-between" align="center">
+                <n-text depth="3">{{ t('rules.count') }}</n-text>
+                <n-text strong>{{ provider.count ?? '-' }}</n-text>
+              </n-flex>
+              <n-flex justify="space-between" align="center">
+                <n-text depth="3">{{ t('rules.updatedAt') }}</n-text>
+                <n-text strong>{{ formatProviderTime(provider.updatedAt || provider.updateAt) }}</n-text>
+              </n-flex>
+            </n-flex>
+          </n-card>
+        </n-grid-item>
+      </n-grid>
 
-      <div v-else class="empty-state">
-        <div class="empty-icon">
-          <n-icon size="48"><FilterOutline /></n-icon>
-        </div>
-        <h3 class="empty-title">{{ providerLabels.noProviders }}</h3>
-      </div>
-    </div>
+      <n-empty v-else size="huge" :description="t('rules.noProviders')" style="margin-top: 48px;">
+        <template #icon><n-icon><FilterOutline /></n-icon></template>
+      </n-empty>
+    </n-flex>
 
-    <div v-if="activeTab === 'custom'" class="card-list">
-      <div class="custom-hint">{{ customLabels.hint }}</div>
-      <div v-if="rulesStore.customRules.length" class="rules-grid">
-        <div v-for="rule in rulesStore.customRules" :key="rule.id" class="rule-card">
-          <div class="rule-head">
-            <div class="rule-meta">
-              <n-tag round size="small" :bordered="false">{{ matchTypeLabel(rule.match_type) }}</n-tag>
-              <n-tag size="small" round :type="actionTagType(rule.action)">{{ actionLabel(rule.action) }}</n-tag>
-            </div>
-            <n-switch
-              :value="rule.enabled"
-              :loading="rulesStore.customRuleUpdating[rule.id]"
-              @update:value="onToggleCustomRule(rule.id)"
-            />
-          </div>
-          <div class="rule-payload">{{ rule.payload || '-' }}</div>
-          <div v-if="rule.note" class="custom-note">{{ rule.note }}</div>
-          <div class="rule-footer">
-            <n-space size="small">
-              <n-button size="tiny" secondary @click="openEditCustomRule(rule)">
-                {{ customLabels.edit }}
-              </n-button>
-              <n-popconfirm @positive-click="onDeleteCustomRule(rule.id)">
-                <template #trigger>
-                  <n-button size="tiny" secondary type="error">{{ customLabels.delete }}</n-button>
-                </template>
-                {{ customLabels.deleteConfirm }}
-              </n-popconfirm>
-            </n-space>
-            <n-tag
-              size="small"
-              round
-              :bordered="false"
-              :type="rule.enabled ? 'success' : 'warning'"
-            >
-              {{ rule.enabled ? providerLabels.enabled : providerLabels.disabled }}
-            </n-tag>
-          </div>
-        </div>
-      </div>
-
-      <div v-else class="empty-state">
-        <div class="empty-icon">
-          <n-icon size="48"><AddOutline /></n-icon>
-        </div>
-        <h3 class="empty-title">{{ customLabels.empty }}</h3>
-        <n-button type="primary" secondary style="margin-top: 16px" @click="openCreateCustomRule">
-          {{ customLabels.add }}
-        </n-button>
-      </div>
-    </div>
+    <n-flex v-if="activeTab === 'custom'" vertical style="margin-top: 24px;" class="card-list">
+      <n-alert type="info" :show-icon="false" class="custom-hint">{{ t('rules.custom.hint') }}</n-alert>
+      <n-list v-if="rulesStore.customRules.length" hoverable class="rules-list" :show-divider="true">
+        <n-list-item v-for="rule in rulesStore.customRules" :key="rule.id" style="padding: 12px 16px;">
+          <n-flex justify="space-between" align="center" :wrap="false">
+            <n-flex align="center" :wrap="false" style="flex: 1; overflow: hidden; min-width: 0;">
+              <n-tag round size="small" :bordered="false" style="min-width: 80px; justify-content: center;">{{ matchTypeLabel(rule.match_type) }}</n-tag>
+              <n-ellipsis :tooltip="true" style="flex: 1; margin-left: 12px;">
+                <n-text>{{ rule.payload || '*' }}</n-text>
+              </n-ellipsis>
+            </n-flex>
+            
+            <n-flex align="center" :wrap="false" style="min-width: 260px; justify-content: flex-end;">
+              <n-tag size="small" round style="margin-right: 12px;">{{ actionLabel(rule.action) }}</n-tag>
+              <n-space size="small" style="margin-right: 16px;">
+                <n-button size="tiny" secondary @click="openEditCustomRule(rule)">
+                  {{ t('rules.custom.edit') }}
+                </n-button>
+                <n-popconfirm @positive-click="onDeleteCustomRule(rule.id)">
+                  <template #trigger>
+                    <n-button size="tiny" secondary type="error">{{ t('rules.custom.delete') }}</n-button>
+                  </template>
+                  {{ t('rules.custom.deleteConfirm') }}
+                </n-popconfirm>
+              </n-space>
+              <n-switch
+                size="small"
+                :value="rule.enabled"
+                :loading="rulesStore.customRuleUpdating[rule.id]"
+                @update:value="onToggleCustomRule(rule.id)"
+              />
+            </n-flex>
+          </n-flex>
+        </n-list-item>
+      </n-list>
+      <n-empty v-else size="huge" :description="t('rules.custom.empty')" style="margin-top: 48px;">
+        <template #icon><n-icon><AddOutline /></n-icon></template>
+        <template #extra>
+          <n-button type="primary" secondary style="margin-top: 16px" @click="openCreateCustomRule">
+            {{ t('rules.custom.add') }}
+          </n-button>
+        </template>
+      </n-empty>
+    </n-flex>
 
     <!-- 自定义规则编辑表单 -->
     <n-modal
       v-model:show="customModalShow"
       preset="card"
-      :title="editingCustomRule ? customLabels.editTitle : customLabels.addTitle"
+      :title="editingCustomRule ? t('rules.custom.editTitle') : t('rules.custom.addTitle')"
       style="max-width: 520px"
     >
       <n-form label-placement="top">
-        <n-form-item :label="customLabels.matchType">
+        <n-form-item :label="t('rules.custom.matchType')">
           <n-select v-model:value="customForm.matchType" :options="matchTypeOptions" />
         </n-form-item>
-        <n-form-item :label="customLabels.payload">
+        <n-form-item :label="t('rules.custom.payload')">
           <n-input
             v-model:value="customForm.payload"
             type="textarea"
             :rows="3"
-            :placeholder="customLabels.payloadPlaceholder"
+            :placeholder="t('rules.custom.payloadPlaceholder')"
           />
         </n-form-item>
-        <n-form-item :label="customLabels.action">
+        <n-form-item :label="t('rules.custom.action')">
           <n-select v-model:value="customForm.action" :options="actionOptions" />
         </n-form-item>
-        <n-form-item :label="customLabels.note">
-          <n-input v-model:value="customForm.note" :placeholder="customLabels.notePlaceholder" />
+        <n-form-item :label="t('rules.custom.note')">
+          <n-input v-model:value="customForm.note" :placeholder="t('rules.custom.notePlaceholder')" />
         </n-form-item>
       </n-form>
       <template #footer>
         <n-space justify="end">
-          <n-button @click="customModalShow = false">{{ customLabels.cancel }}</n-button>
+          <n-button @click="customModalShow = false">{{ t('rules.custom.cancel') }}</n-button>
           <n-button type="primary" :loading="customSubmitting" @click="submitCustomRule">
-            {{ customLabels.confirm }}
+            {{ t('rules.custom.confirm') }}
           </n-button>
         </n-space>
       </template>
@@ -240,7 +212,7 @@ defineOptions({
   name: 'RulesView',
 })
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const message = useMessage()
 const rulesStore = useRulesStore()
 const activeTab = ref<'rules' | 'providers' | 'custom'>('rules')
@@ -258,77 +230,29 @@ const customForm = reactive({
   note: '',
 })
 
-const providerLabels = computed(() => ({
-  rulesTab: locale.value.startsWith('zh') ? '规则列表' : 'Rules',
-  providersTab: locale.value.startsWith('zh') ? '规则 Providers' : 'Providers',
-  updateAll: locale.value.startsWith('zh') ? '刷新全部 Providers' : 'Update All',
-  count: locale.value.startsWith('zh') ? '条目数' : 'Count',
-  updatedAt: locale.value.startsWith('zh') ? '更新时间' : 'Updated',
-  noProviders: locale.value.startsWith('zh') ? '暂无规则 Providers' : 'No rule providers',
-  enabled: locale.value.startsWith('zh') ? '已启用' : 'Enabled',
-  disabled: locale.value.startsWith('zh') ? '已停用' : 'Disabled',
-}))
-
-const customLabels = computed(() => {
-  const zh = locale.value.startsWith('zh')
-  return {
-    tab: zh ? '自定义' : 'Custom',
-    add: zh ? '新增规则' : 'Add Rule',
-    edit: zh ? '编辑' : 'Edit',
-    delete: zh ? '删除' : 'Delete',
-    deleteConfirm: zh ? '确认删除这条自定义规则？' : 'Delete this custom rule?',
-    addTitle: zh ? '新增自定义规则' : 'Add Custom Rule',
-    editTitle: zh ? '编辑自定义规则' : 'Edit Custom Rule',
-    cancel: zh ? '取消' : 'Cancel',
-    confirm: zh ? '保存' : 'Save',
-    matchType: zh ? '匹配类型' : 'Match Type',
-    payload: zh ? '匹配内容' : 'Payload',
-    payloadPlaceholder: zh
-      ? '每行一个，或用逗号分隔（如 example.com, *.test.com）'
-      : 'One per line, or comma-separated (e.g. example.com, *.test.com)',
-    action: zh ? '动作' : 'Action',
-    note: zh ? '备注' : 'Note',
-    notePlaceholder: zh ? '可选' : 'Optional',
-    empty: zh ? '暂无自定义规则' : 'No custom rules',
-    hint: zh
-      ? '自定义规则持久化在本地，重启内核后生效。与上方“规则列表”（内核默认规则，仅本会话生效）不同。'
-      : 'Custom rules are persisted locally and take effect after kernel restart. Different from the built-in rules above (runtime only).',
-    addSuccess: zh ? '已新增规则，重启内核后生效' : 'Rule added (effective after kernel restart)',
-    updateSuccess: zh ? '已更新规则，重启内核后生效' : 'Rule updated (effective after kernel restart)',
-    deleteSuccess: zh ? '已删除规则，重启内核后生效' : 'Rule deleted (effective after kernel restart)',
-  }
-})
-
 const matchTypeOptions = computed(() => {
-  const zh = locale.value.startsWith('zh')
   return [
-    { label: zh ? '域名后缀' : 'Domain Suffix', value: 'domain_suffix' as CustomRuleMatchType },
-    { label: zh ? '精确域名' : 'Domain', value: 'domain' as CustomRuleMatchType },
-    { label: zh ? '域名关键字' : 'Domain Keyword', value: 'domain_keyword' as CustomRuleMatchType },
+    { label: t('rules.custom.matchTypes.domainSuffix'), value: 'domain_suffix' as CustomRuleMatchType },
+    { label: t('rules.custom.matchTypes.domain'), value: 'domain' as CustomRuleMatchType },
+    { label: t('rules.custom.matchTypes.domainKeyword'), value: 'domain_keyword' as CustomRuleMatchType },
     { label: 'IP CIDR', value: 'ip_cidr' as CustomRuleMatchType },
   ]
 })
 
 const actionOptions = computed(() => {
-  const zh = locale.value.startsWith('zh')
   return [
-    { label: zh ? '直连' : 'Direct', value: 'direct' as CustomRuleAction },
-    { label: zh ? '走代理' : 'Proxy', value: 'proxy' as CustomRuleAction },
-    { label: zh ? '拦截' : 'Block', value: 'block' as CustomRuleAction },
+    { label: t('rules.custom.actions.direct'), value: 'direct' as CustomRuleAction },
+    { label: t('rules.custom.actions.proxy'), value: 'proxy' as CustomRuleAction },
+    { label: t('rules.custom.actions.block'), value: 'block' as CustomRuleAction },
   ]
 })
 
-const matchTypeLabel = (mt: CustomRuleMatchType) =>
-  matchTypeOptions.value.find((o) => o.value === mt)?.label || mt
+const matchTypeLabel = (mt: CustomRuleMatchType) => {
+  return matchTypeOptions.value.find((o) => o.value === mt)?.label || mt
+}
 
 const actionLabel = (act: CustomRuleAction) =>
   actionOptions.value.find((o) => o.value === act)?.label || act
-
-const actionTagType = (act: CustomRuleAction): 'success' | 'info' | 'error' => {
-  if (act === 'direct') return 'success'
-  if (act === 'proxy') return 'info'
-  return 'error'
-}
 
 const filteredRules = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
@@ -388,7 +312,7 @@ const updateProvider = async (providerName: string) => {
 const updateAllProviders = async () => {
   try {
     await rulesStore.updateAllProviders()
-    message.success(providerLabels.value.updateAll)
+    message.success(t('rules.updateAllSuccess'))
   } catch (error) {
     message.error(String(error))
   }
@@ -426,7 +350,7 @@ const openEditCustomRule = (rule: CustomRule) => {
 
 const submitCustomRule = async () => {
   if (!customForm.payload.trim()) {
-    message.error(customLabels.value.payload)
+    message.error(t('rules.custom.payloadPlaceholder'))
     return
   }
   customSubmitting.value = true
@@ -439,7 +363,7 @@ const submitCustomRule = async () => {
         customForm.action,
         customForm.note || undefined,
       )
-      message.success(customLabels.value.updateSuccess)
+      message.success(t('rules.custom.updateSuccess'))
     } else {
       await rulesStore.addCustomRule(
         customForm.matchType,
@@ -447,7 +371,7 @@ const submitCustomRule = async () => {
         customForm.action,
         customForm.note || undefined,
       )
-      message.success(customLabels.value.addSuccess)
+      message.success(t('rules.custom.addSuccess'))
     }
     customModalShow.value = false
   } catch (error) {
@@ -468,7 +392,7 @@ const onToggleCustomRule = (id: string) => async () => {
 const onDeleteCustomRule = async (id: string) => {
   try {
     await rulesStore.deleteCustomRule(id)
-    message.success(customLabels.value.deleteSuccess)
+    message.success(t('rules.custom.deleteSuccess'))
   } catch (error) {
     message.error(String(error))
   }
@@ -493,21 +417,21 @@ if (!rulesStore.rules.length && !rulesStore.providers.length && !rulesStore.cust
 </script>
 
 <style scoped>
-.page-container {
-  padding: var(--layout-page-padding-y, 16px) var(--layout-page-padding-x, 24px);
-  max-width: var(--layout-page-max-width, 1400px);
-  margin: 0 auto;
+.page-shell {
   display: flex;
   flex-direction: column;
   gap: var(--layout-page-gap, 16px);
+  height: 100%;
 }
 
 .toolbar-card,
 .rule-card,
 .provider-card {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 16px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 24px -6px rgba(0, 0, 0, 0.05);
 }
 
 .toolbar-card {

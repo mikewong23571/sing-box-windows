@@ -1,38 +1,42 @@
 <template>
-  <div class="settings-page">
-    <div class="settings-tabs">
-      <button
+  <div class="page-shell" style="padding: 24px;">
+    <PageHeader :title="t('setting.title')" :subtitle="t('setting.subtitle')" />
+    <n-flex vertical size="large" style="flex: 1; min-height: 0;">
+      <n-tabs type="line" placement="left" animated v-model:value="activeTab" style="height: 100%;">
+      <n-tab-pane
         v-for="item in navItems"
         :key="item.key"
-        class="settings-tab"
-        :class="{ active: activeTab === item.key }"
-        @click="activeTab = item.key"
+        :name="item.key"
       >
-        <n-icon :size="16"><component :is="item.icon" /></n-icon>
-        <span>{{ item.label }}</span>
-        <span v-if="item.key === 'kernel' && hasNewVersion" class="tab-dot"></span>
-        <span v-if="item.key === 'maintenance' && updateStore.hasUpdate" class="tab-dot"></span>
-      </button>
-    </div>
-
-    <div class="settings-body">
-      <transition name="section-fade" mode="out-in">
-        <div :key="activeTab" class="settings-content">
-          <SettingsBasicTab
-            v-if="activeTab === 'basics'"
+        <template #tab>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <n-icon :size="18" style="display: flex;"><component :is="item.icon" /></n-icon>
+            <span style="line-height: 1;">{{ item.label }}</span>
+            <n-badge v-if="item.key === 'kernel' && hasNewVersion" dot type="warning" />
+            <n-badge v-if="item.key === 'maintenance' && updateStore.hasUpdate" dot type="warning" />
+          </div>
+        </template>
+        <div class="settings-content" style="max-width: 720px; margin: 0 auto; padding: 0 24px; height: 100%; overflow-y: auto;">
+          <SettingsGeneralTab
+            v-if="item.key === 'general'"
             :t="t"
             :locale-store="localeStore"
-            :theme-store="themeStore"
             :auto-start="autoStart"
             :auto-hide-to-tray-on-autostart="autoHideToTrayOnAutostart"
             :tray-close-behavior="trayCloseBehavior"
             :language-options="languageOptions"
             :tray-close-behavior-options="trayCloseBehaviorOptions"
-            :accent-presets="accentPresets"
             :on-auto-start-change="onAutoStartChange"
             :on-auto-hide-to-tray-on-autostart-change="onAutoHideToTrayOnAutostartChange"
             :on-tray-close-behavior-change="onTrayCloseBehaviorChange"
             :on-change-language="handleChangeLanguage"
+          />
+
+          <SettingsAppearanceTab
+            v-if="item.key === 'appearance'"
+            :t="t"
+            :theme-store="themeStore"
+            :accent-presets="accentPresets"
             :on-theme-mode-change="onThemeModeChange"
             :on-accent-change="onAccentChange"
             :select-accent-preset="selectAccentPreset"
@@ -40,7 +44,7 @@
           />
 
           <SettingsKernelTab
-            v-if="activeTab === 'kernel'"
+            v-if="item.key === 'kernel'"
             :t="t"
             :kernel-store="kernelStore"
             :selected-kernel-version="selectedKernelVersion"
@@ -58,8 +62,8 @@
             :format-version="formatVersion"
           />
 
-          <SettingsAdvancedTab
-            v-if="activeTab === 'advanced'"
+          <SettingsNetworkTab
+            v-if="item.key === 'network'"
             :t="t"
             :app-store="appStore"
             :tun-stack-options="tunStackOptions"
@@ -70,7 +74,7 @@
           />
 
           <SettingsMaintenanceTab
-            v-if="activeTab === 'maintenance'"
+            v-if="item.key === 'maintenance'"
             :t="t"
             :update-store="updateStore"
             :checking-update="checkingUpdate"
@@ -95,7 +99,7 @@
           />
 
           <SettingsAboutTab
-            v-if="activeTab === 'about'"
+            v-if="item.key === 'about'"
             :t="t"
             :update-store="updateStore"
             :kernel-store="kernelStore"
@@ -103,8 +107,8 @@
             :format-version="formatVersion"
           />
         </div>
-      </transition>
-    </div>
+      </n-tab-pane>
+    </n-tabs>
 
     <PortSettingsDialog v-model:show="showPortModal" />
 
@@ -115,21 +119,38 @@
       class="modern-modal"
       :style="{ width: '520px' }"
     >
-      <div class="manual-import-body">
-        <div class="manual-import-desc">{{ t('setting.kernel.manualImportDesc') }}</div>
-        <div class="manual-drop-zone" :class="{ active: manualDropActive }">
-          <n-icon size="24"><DownloadOutline /></n-icon>
-          <div>{{ t('setting.kernel.dropHint') }}</div>
-          <div class="manual-drop-sub">{{ t('setting.kernel.dropSubHint') }}</div>
-        </div>
+      <n-flex vertical size="large">
+        <n-text depth="3">{{ t('setting.kernel.manualImportDesc') }}</n-text>
+        <n-upload
+          multiple
+          directory-dnd
+          :max="1"
+          @before-upload="() => false"
+        >
+          <n-upload-dragger>
+            <div style="margin-bottom: 12px">
+              <n-icon size="48" :depth="3">
+                <DownloadOutline />
+              </n-icon>
+            </div>
+            <n-text style="font-size: 16px">
+              {{ t('setting.kernel.dropHint') }}
+            </n-text>
+            <n-p depth="3" style="margin: 8px 0 0 0">
+              {{ t('setting.kernel.dropSubHint') }}
+            </n-p>
+          </n-upload-dragger>
+        </n-upload>
 
-        <div v-if="manualKernelPath" class="manual-selected">
-          <div class="manual-selected-label">{{ t('setting.kernel.selectedFile') }}</div>
-          <div class="manual-selected-path">{{ manualKernelPath }}</div>
-        </div>
-      </div>
+        <n-alert v-if="manualKernelPath" type="info">
+          <n-flex vertical size="small">
+            <n-text depth="3" style="font-size: 12px">{{ t('setting.kernel.selectedFile') }}</n-text>
+            <n-ellipsis style="max-width: 100%">{{ manualKernelPath }}</n-ellipsis>
+          </n-flex>
+        </n-alert>
+      </n-flex>
       <template #action>
-        <n-space justify="space-between" style="width: 100%">
+        <n-flex justify="space-between" style="width: 100%">
           <n-button @click="pickManualKernelFile" :disabled="manualImporting">
             {{ t('setting.kernel.chooseFile') }}
           </n-button>
@@ -141,9 +162,10 @@
               {{ t('setting.kernel.importNow') }}
             </n-button>
           </n-space>
-        </n-space>
+        </n-flex>
       </template>
     </n-modal>
+    </n-flex>
   </div>
 </template>
 
@@ -158,6 +180,7 @@ import {
   HardwareChipOutline,
   GlobeOutline,
   CloudDownloadOutline,
+  SettingsOutline,
 } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import {
@@ -178,9 +201,11 @@ import PortSettingsDialog from '@/components/common/PortSettingsDialog.vue'
 import { ACCENT_PRESETS, TUN_STACK_OPTIONS } from '@/views/setting/setting-options'
 import { useKernelDownload } from '@/views/setting/useKernelDownload'
 import { useUpdateProgressListener } from '@/views/setting/useUpdateProgressListener'
-import SettingsBasicTab from '@/views/setting/components/SettingsBasicTab.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
+import SettingsGeneralTab from '@/views/setting/components/SettingsGeneralTab.vue'
+import SettingsAppearanceTab from '@/views/setting/components/SettingsAppearanceTab.vue'
 import SettingsKernelTab from '@/views/setting/components/SettingsKernelTab.vue'
-import SettingsAdvancedTab from '@/views/setting/components/SettingsAdvancedTab.vue'
+import SettingsNetworkTab from '@/views/setting/components/SettingsNetworkTab.vue'
 import SettingsMaintenanceTab from '@/views/setting/components/SettingsMaintenanceTab.vue'
 import SettingsAboutTab from '@/views/setting/components/SettingsAboutTab.vue'
 import '@/views/setting/setting-shared.css'
@@ -195,9 +220,9 @@ const localeStore = useLocaleStore()
 const themeStore = useThemeStore()
 const subStore = useSubStore()
 
-type SettingTabKey = 'basics' | 'kernel' | 'advanced' | 'maintenance' | 'about'
+type SettingTabKey = 'general' | 'appearance' | 'kernel' | 'network' | 'maintenance' | 'about'
 
-const activeTab = ref<SettingTabKey>('basics')
+const activeTab = ref<SettingTabKey>('general')
 const selectedKernelVersion = ref<string | undefined>(undefined)
 const platformInfo = ref<{ os: string; arch: string; display_name: string } | null>(null)
 
@@ -226,8 +251,13 @@ interface NavItem {
 
 const navItems = computed<NavItem[]>(() => [
   {
-    key: 'basics',
-    label: t('setting.navigation.basics'),
+    key: 'general',
+    label: t('setting.navigation.general'),
+    icon: SettingsOutline,
+  },
+  {
+    key: 'appearance',
+    label: t('setting.navigation.appearance'),
     icon: ColorPaletteOutline,
   },
   {
@@ -236,8 +266,8 @@ const navItems = computed<NavItem[]>(() => [
     icon: HardwareChipOutline,
   },
   {
-    key: 'advanced',
-    label: t('setting.navigation.advanced'),
+    key: 'network',
+    label: t('setting.navigation.network'),
     icon: GlobeOutline,
   },
   {
@@ -701,23 +731,22 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.settings-page {
-  padding: var(--layout-page-padding-y, 24px) var(--layout-page-padding-x, 32px);
-  max-width: var(--layout-page-max-width, 1400px);
-  margin: 0 auto;
+.page-shell {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: var(--layout-page-gap, 24px);
   height: 100%;
 }
 
 .settings-tabs {
   display: flex;
-  gap: 4px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 12px;
-  padding: 4px;
+  gap: 8px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 6px;
+  box-shadow: 0 4px 24px -6px rgba(0, 0, 0, 0.05);
 }
 
 .settings-tab {
@@ -841,7 +870,7 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .settings-page {
+  .page-shell {
     padding: 14px;
   }
 

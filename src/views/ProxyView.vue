@@ -1,201 +1,220 @@
 <template>
-  <div class="proxy-page">
-    <div class="proxy-top-bar">
-      <div class="top-bar-left">
-        <n-tabs v-model:value="proxyStore.viewTab" type="segment" size="small">
-          <n-tab-pane name="groups" :tab="labels.groupsTab" />
-          <n-tab-pane name="providers" :tab="labels.providersTab" />
-        </n-tabs>
-      </div>
-      <div class="top-bar-right">
-        <n-button size="small" secondary @click="refresh">
-          <template #icon>
-            <n-icon><RefreshOutline /></n-icon>
-          </template>
-          {{ t('common.refresh') }}
-        </n-button>
-        <n-button size="small" type="primary" secondary :loading="proxyStore.batchTesting" @click="batchTest">
-          <template #icon>
-            <n-icon><SpeedometerOutline /></n-icon>
-          </template>
-          {{ t('proxy.batchTest') }}
-        </n-button>
-      </div>
-    </div>
+  <div class="page-shell">
+    <PageHeader :title="t('proxy.title')" :subtitle="t('proxy.subtitle')">
+      <template #actions>
+        <n-space>
+          <n-button secondary @click="refresh">
+            <template #icon><n-icon><RefreshOutline /></n-icon></template>
+            {{ t('common.refresh') }}
+          </n-button>
+          
+          <n-button type="primary" secondary :loading="proxyStore.batchTesting" @click="batchTest">
+            <template #icon><n-icon><SpeedometerOutline /></n-icon></template>
+            {{ t('proxy.batchTest') }}
+          </n-button>
+        </n-space>
+      </template>
+    </PageHeader>
 
-    <div v-if="proxyStore.viewTab === 'groups'" class="split-view">
-      <div class="group-sidebar">
-        <div class="sidebar-title">{{ labels.groupsTab }}</div>
-        <div class="sidebar-list">
-          <div
-            v-for="group in filteredGroups"
-            :key="group.name"
-            class="sidebar-item"
-            :class="{ active: proxyStore.selectedGroup === group.name }"
-            @click="selectGroup(group.name)"
-          >
-            <div class="sidebar-item-main">
-              <span class="sidebar-item-name">{{ group.name }}</span>
+    <n-tabs v-model:value="proxyStore.viewTab" type="segment" size="small" style="margin-bottom: 16px; width: 240px;">
+      <n-tab-pane name="groups" :tab="t('proxy.groupsTab')" />
+      <n-tab-pane name="providers" :tab="t('proxy.providersTab')" />
+    </n-tabs>
+
+    <n-flex v-if="proxyStore.viewTab === 'groups'" vertical size="large" class="node-panel">
+      <n-flex align="center" :wrap="false" class="node-toolbar">
+        <n-input v-model:value="searchQuery" size="small" :placeholder="t('proxy.searchNode')" clearable style="flex: 1">
+          <template #prefix>
+            <n-icon><SearchOutline /></n-icon>
+          </template>
+        </n-input>
+        <n-select v-model:value="proxyStore.ordering" size="small" :options="orderingOptions" style="width: 120px" />
+        <n-button size="small" quaternary :type="favoritesOnly ? 'primary' : 'default'" @click="favoritesOnly = !favoritesOnly">
+          <template #icon>
+            <n-icon>
+              <Star v-if="favoritesOnly" />
+              <StarOutline v-else />
+            </n-icon>
+          </template>
+        </n-button>
+        <n-button
+          size="small"
+          quaternary
+          :type="proxyStore.hideUnavailable ? 'primary' : 'default'"
+          @click="proxyStore.hideUnavailable = !proxyStore.hideUnavailable"
+          :title="proxyStore.hideUnavailable ? t('proxy.hideUnavailable') : t('proxy.showAll')"
+        >
+          <template #icon>
+            <n-icon>
+              <EyeOffOutline v-if="proxyStore.hideUnavailable" />
+              <EyeOutline v-else />
+            </n-icon>
+          </template>
+        </n-button>
+      </n-flex>
+
+      <n-collapse v-if="filteredGroups.length" :default-expanded-names="[proxyStore.selectedGroup]" accordion>
+        <n-collapse-item
+          v-for="group in filteredGroups"
+          :key="group.name"
+          :name="group.name"
+        >
+          <template #header>
+            <n-space align="center">
+              <n-text strong>{{ group.name }}</n-text>
               <n-tag size="tiny" round :bordered="false">{{ group.type }}</n-tag>
-            </div>
-            <div class="sidebar-item-now" v-if="group.now">
-              <img v-if="getNodeFlagUrl(group.now)" class="node-flag" :src="getNodeFlagUrl(group.now)" alt="" />
-              <span>{{ getDisplayNodeName(group.now) }}</span>
-            </div>
-          </div>
-          <div v-if="!filteredGroups.length" class="sidebar-empty">
-            <n-icon size="32"><GlobeOutline /></n-icon>
-            <span>{{ t('proxy.noProxyGroups') }}</span>
-          </div>
-        </div>
-      </div>
+            </n-space>
+          </template>
+          <template #header-extra>
+            <n-space align="center">
+              <n-text depth="3" style="font-size: 13px">{{ group.now ? getDisplayNodeName(group.now) : '-' }}</n-text>
+            </n-space>
+          </template>
 
-      <div class="node-panel">
-        <div class="node-toolbar">
-          <n-input v-model:value="searchQuery" size="small" :placeholder="t('proxy.searchNode')" clearable>
-            <template #prefix>
-              <n-icon><SearchOutline /></n-icon>
-            </template>
-          </n-input>
-          <n-select v-model:value="proxyStore.ordering" size="small" :options="orderingOptions" style="width: 120px" />
-          <n-button size="small" quaternary :type="favoritesOnly ? 'primary' : 'default'" @click="favoritesOnly = !favoritesOnly">
-            <template #icon>
-              <n-icon>
-                <Star v-if="favoritesOnly" />
-                <StarOutline v-else />
-              </n-icon>
-            </template>
-          </n-button>
-          <n-switch v-model:value="proxyStore.hideUnavailable" size="small">
-            <template #checked>{{ labels.hideUnavailable }}</template>
-            <template #unchecked>{{ labels.showAll }}</template>
-          </n-switch>
-        </div>
+          <n-card size="small" style="margin-bottom: 12px; background: transparent;">
+            <n-flex align="center" justify="space-between">
+              <n-space align="center">
+                <n-text strong>{{ t('proxy.recommended') }}</n-text>
+                <n-text v-if="proxyStore.getRecommendedNode(group)">
+                  <img
+                    v-if="getNodeFlagUrl(proxyStore.getRecommendedNode(group))"
+                    class="node-flag"
+                    :src="getNodeFlagUrl(proxyStore.getRecommendedNode(group))"
+                    alt=""
+                    style="height: 14px; border-radius: 2px; vertical-align: middle; margin-right: 4px;"
+                  />
+                  {{ getDisplayNodeName(proxyStore.getRecommendedNode(group)) }}
+                </n-text>
+                <n-text v-else>-</n-text>
+                <n-divider vertical />
+                <n-text>{{ group.all.length }} {{ t('proxy.nodes') }}</n-text>
+                <n-divider vertical />
+                <n-text>{{ t('proxy.favorites') }} {{ group.all.filter(n => proxyStore.isFavorite(n)).length }}</n-text>
+              </n-space>
+              <n-space>
+                <n-button size="small" secondary @click.stop="testGroupDelay(group.name)" :loading="proxyStore.groupTestingMap[group.name]">
+                  {{ t('proxy.testNode') }}
+                </n-button>
+                <n-button size="small" tertiary @click.stop="switchRecommended(group)">
+                  {{ t('proxy.autoSelect') }}
+                </n-button>
+              </n-space>
+            </n-flex>
+          </n-card>
 
-        <div class="node-summary" v-if="activeGroup">
-          <span class="summary-text">
-            {{ labels.recommended }}
-            <template v-if="proxyStore.getRecommendedNode(activeGroup)">
-              <img
-                v-if="getNodeFlagUrl(proxyStore.getRecommendedNode(activeGroup))"
-                class="node-flag"
-                :src="getNodeFlagUrl(proxyStore.getRecommendedNode(activeGroup))"
-                alt=""
-              />
-              {{ getDisplayNodeName(proxyStore.getRecommendedNode(activeGroup)) }}
-            </template>
-            <template v-else>-</template>
-          </span>
-          <span class="summary-sep">|</span>
-          <span class="summary-text">{{ activeGroup.all.length }} {{ t('proxy.nodes') }}</span>
-          <span class="summary-sep">|</span>
-          <span class="summary-text">{{ labels.favorites }} {{ activeGroup.all.filter(n => proxyStore.isFavorite(n)).length }}</span>
-          <div class="summary-spacer"></div>
-          <n-button size="tiny" secondary @click="testActiveGroup" :loading="proxyStore.groupTestingMap[activeGroup.name]">
-            {{ t('proxy.testNode') }}
-          </n-button>
-          <n-button size="tiny" tertiary @click="switchRecommended(activeGroup)">
-            {{ t('proxy.autoSelect') }}
-          </n-button>
-        </div>
-
-        <div v-if="activeGroupNodes.length" class="node-grid">
-          <div
-            v-for="node in activeGroupNodes"
-            :key="`${activeGroup!.name}-${node}`"
-            class="node-card"
-            :class="{ active: activeGroup?.now === node }"
-            @click="changeProxy(activeGroup!.name, node)"
+          <n-list
+            v-if="getFilteredGroupNodes(group).length"
+            hoverable
+            clickable
+            class="proxy-node-list"
+            :show-divider="true"
           >
-            <div class="node-card-top">
-              <span class="node-card-name">
-                <img v-if="getNodeFlagUrl(node)" class="node-flag" :src="getNodeFlagUrl(node)" alt="" />
-                <span>{{ getDisplayNodeName(node) }}</span>
-              </span>
-              <n-button text size="tiny" class="node-fav-btn" @click.stop="proxyStore.toggleFavorite(node)">
-                <n-icon size="14">
-                  <Star v-if="proxyStore.isFavorite(node)" style="color: #f59e0b" />
-                  <StarOutline v-else />
-                </n-icon>
-              </n-button>
-            </div>
-            <div class="node-card-bottom">
-              <n-tag
-                size="small"
-                round
-                :bordered="false"
-                :type="latencyTagType(node)"
-              >
-                {{ formatLatency(node) }}
-              </n-tag>
-              <n-button
-                size="tiny"
-                quaternary
-                :loading="proxyStore.nodeTestingMap[node]"
-                @click.stop="testNode(node)"
-              >
-                <template #icon>
-                  <n-icon size="13"><SpeedometerOutline /></n-icon>
-                </template>
-              </n-button>
-            </div>
-          </div>
-        </div>
-
-        <div v-else-if="activeGroup" class="node-empty">
-          <n-icon size="36"><GlobeOutline /></n-icon>
-          <span>{{ t('proxy.noProxyGroups') }}</span>
-        </div>
-
-        <div v-else class="node-empty">
-          <n-icon size="36"><GlobeOutline /></n-icon>
-          <span>{{ t('proxy.noProxyGroups') }}</span>
-        </div>
-      </div>
-    </div>
-
-    <div v-else class="providers-view">
-      <div v-if="filteredProviders.length" class="providers-list">
-        <div v-for="provider in filteredProviders" :key="provider.name" class="provider-card">
-          <div class="provider-header">
-            <div>
-              <div class="provider-name">{{ provider.name }}</div>
-              <div class="provider-meta">
-                {{ provider.vehicleType || '-' }} · {{ provider.behavior || '-' }}
-                · {{ labels.nodeCount }} {{ provider.proxies?.length || 0 }}
-              </div>
-            </div>
-            <n-button
-              size="small"
-              secondary
-              :loading="proxyStore.providerUpdatingMap[provider.name]"
-              @click="refreshProvider(provider.name)"
+            <n-list-item
+              v-for="node in getFilteredGroupNodes(group)"
+              :key="node"
+              :class="{ 'active-node-item': group.now === node }"
+              @click="changeProxy(group.name, node)"
+              style="padding: 12px 16px;"
             >
-              {{ t('common.refresh') }}
-            </n-button>
-          </div>
-          <div class="provider-node-grid">
-            <div v-for="proxy in getProviderNodes(provider)" :key="proxy.name" class="provider-node-item">
-              <span class="provider-node-name">
-                <img v-if="getNodeFlagUrl(proxy.name)" class="node-flag" :src="getNodeFlagUrl(proxy.name)" alt="" />
-                <span>{{ getDisplayNodeName(proxy.name) }}</span>
-              </span>
-              <n-tag size="small" round :bordered="false">{{ formatLatency(proxy.name) }}</n-tag>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div v-else class="node-empty">
-        <n-icon size="36"><GlobeOutline /></n-icon>
-        <span>{{ labels.noProviders }}</span>
-      </div>
-    </div>
+              <n-flex justify="space-between" align="center" :wrap="false">
+                <n-flex align="center" :wrap="false" style="flex: 1; overflow: hidden; min-width: 0;">
+                  <img v-if="getNodeFlagUrl(node)" class="node-flag" :src="getNodeFlagUrl(node)" alt="" style="height: 14px; border-radius: 2px; vertical-align: middle; margin-right: 8px;" />
+                  <n-ellipsis :tooltip="true" style="flex: 1;">
+                    <n-text :strong="group.now === node">{{ getDisplayNodeName(node) }}</n-text>
+                  </n-ellipsis>
+                </n-flex>
+                
+                <n-flex align="center" :wrap="false" style="min-width: 140px; justify-content: flex-end;">
+                  <n-tag
+                    size="small"
+                    round
+                    :bordered="false"
+                    style="margin-right: 8px;"
+                  >
+                    {{ formatLatency(node) }}
+                  </n-tag>
+                  <n-button
+                    size="small"
+                    quaternary
+                    :loading="proxyStore.nodeTestingMap[node]"
+                    @click.stop="testNode(node)"
+                    style="margin-right: 4px;"
+                  >
+                    <template #icon>
+                      <n-icon size="14"><SpeedometerOutline /></n-icon>
+                    </template>
+                  </n-button>
+                  <n-button text size="tiny" @click.stop="proxyStore.toggleFavorite(node)">
+                    <n-icon size="18">
+                      <Star v-if="proxyStore.isFavorite(node)" style="color: #f59e0b" />
+                      <StarOutline v-else />
+                    </n-icon>
+                  </n-button>
+                </n-flex>
+              </n-flex>
+            </n-list-item>
+          </n-list>
+          <n-empty v-else :description="t('proxy.noNodes')" style="margin-top: 24px;">
+            <template #icon><n-icon><ServerOutline /></n-icon></template>
+          </n-empty>
+        </n-collapse-item>
+      </n-collapse>
+      
+      <n-empty v-else :description="t('proxy.noProxyGroups')" style="margin-top: 48px;">
+        <template #icon><n-icon><GlobeOutline /></n-icon></template>
+      </n-empty>
+    </n-flex>
+
+    <n-flex v-else vertical size="large" class="providers-view">
+      <n-grid v-if="filteredProviders.length" responsive="screen" cols="1" :y-gap="16">
+        <n-grid-item v-for="provider in filteredProviders" :key="provider.name">
+          <n-card size="small">
+            <template #header>
+              <n-flex justify="space-between" align="center">
+                <n-flex vertical :size="0">
+                  <n-text strong>{{ provider.name }}</n-text>
+                  <n-text depth="3" style="font-size: 13px">
+                    {{ provider.vehicleType || '-' }} · {{ provider.behavior || '-' }}
+                    · {{ t('proxy.nodeCount') }} {{ provider.proxies?.length || 0 }}
+                  </n-text>
+                </n-flex>
+                <n-button
+                  size="small"
+                  secondary
+                  :loading="proxyStore.providerUpdatingMap[provider.name]"
+                  @click="refreshProvider(provider.name)"
+                >
+                  {{ t('common.refresh') }}
+                </n-button>
+              </n-flex>
+            </template>
+            <n-grid responsive="screen" cols="1 s:2 m:3 l:4 xl:5" :x-gap="12" :y-gap="12">
+              <n-grid-item v-for="proxy in getProviderNodes(provider)" :key="proxy.name">
+                <n-card size="small" class="provider-node-item">
+                  <n-flex justify="space-between" align="center" :wrap="false">
+                    <n-ellipsis :tooltip="false" style="flex: 1">
+                      <img v-if="getNodeFlagUrl(proxy.name)" class="node-flag" :src="getNodeFlagUrl(proxy.name)" alt="" style="height: 14px; border-radius: 2px; vertical-align: middle; margin-right: 4px;" />
+                      <n-text>{{ getDisplayNodeName(proxy.name) }}</n-text>
+                    </n-ellipsis>
+                    <n-tag size="small" round :bordered="false">{{ formatLatency(proxy.name) }}</n-tag>
+                  </n-flex>
+                </n-card>
+              </n-grid-item>
+            </n-grid>
+          </n-card>
+        </n-grid-item>
+      </n-grid>
+      <n-empty v-else :description="t('proxy.noProviders')" style="margin-top: 48px;">
+        <template #icon><n-icon><GlobeOutline /></n-icon></template>
+      </n-empty>
+    </n-flex>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
+import PageHeader from '@/components/common/PageHeader.vue'
 import {
   GlobeOutline,
   RefreshOutline,
@@ -203,6 +222,8 @@ import {
   SpeedometerOutline,
   Star,
   StarOutline,
+  EyeOutline,
+  EyeOffOutline
 } from '@vicons/ionicons5'
 import { useProxyStore, type ProxyGroup } from '@/stores/kernel/ProxyStore'
 import { useI18n } from 'vue-i18n'
@@ -317,21 +338,10 @@ const getLocalizedCountryNameEntries = () => {
 
 const localizedCountryNameEntries = getLocalizedCountryNameEntries()
 
-const labels = computed(() => ({
-  groupsTab: locale.value.startsWith('zh') ? '代理组' : 'Groups',
-  providersTab: locale.value.startsWith('zh') ? 'Providers' : 'Providers',
-  hideUnavailable: locale.value.startsWith('zh') ? '隐藏不可用' : 'Hide',
-  showAll: locale.value.startsWith('zh') ? '显示全部' : 'Show',
-  recommended: locale.value.startsWith('zh') ? '推荐:' : 'Rec:',
-  favorites: locale.value.startsWith('zh') ? '收藏:' : 'Fav:',
-  nodeCount: locale.value.startsWith('zh') ? '节点:' : 'Nodes:',
-  noProviders: locale.value.startsWith('zh') ? '暂无 Proxy Providers' : 'No proxy providers',
-}))
-
 const orderingOptions = computed(() => [
-  { label: locale.value.startsWith('zh') ? '原始' : 'Natural', value: 'natural' },
-  { label: locale.value.startsWith('zh') ? '延迟' : 'Latency', value: 'latency' },
-  { label: locale.value.startsWith('zh') ? '名称' : 'Name', value: 'name' },
+  { label: t('proxy.orderNatural'), value: 'natural' },
+  { label: t('proxy.orderLatency'), value: 'latency' },
+  { label: t('proxy.orderName'), value: 'name' },
 ])
 
 const filteredGroups = computed(() => {
@@ -345,13 +355,8 @@ const filteredGroups = computed(() => {
   })
 })
 
-const activeGroup = computed(() =>
-  proxyStore.proxyGroups.find((g) => g.name === proxyStore.selectedGroup) || null,
-)
-
-const activeGroupNodes = computed(() => {
-  if (!activeGroup.value) return []
-  let list = proxyStore.getSortedNodesForGroup(activeGroup.value)
+const getFilteredGroupNodes = (group: ProxyGroup) => {
+  let list = proxyStore.getSortedNodesForGroup(group)
   const query = searchQuery.value.trim().toLowerCase()
 
   if (query) {
@@ -363,7 +368,7 @@ const activeGroupNodes = computed(() => {
   }
 
   return list
-})
+}
 
 const filteredProviders = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
@@ -406,10 +411,9 @@ const testNode = async (proxyName: string) => {
   }
 }
 
-const testActiveGroup = async () => {
-  if (!activeGroup.value) return
+const testGroupDelay = async (groupName: string) => {
   try {
-    await proxyStore.testGroupDelay(activeGroup.value.name)
+    await proxyStore.testGroupDelay(groupName)
     message.success(t('proxy.groupTestComplete'))
   } catch (error) {
     message.error(t('proxy.testErrorMessage'))
@@ -493,29 +497,28 @@ const formatLatency = (proxyName: string) => {
   return latency > 0 ? `${latency}ms` : t('proxy.clickToTest')
 }
 
-const latencyTagType = (proxyName: string) => {
-  const latency = proxyStore.getLatency(proxyName)
-  if (activeGroup.value?.now === proxyName) return 'success' as const
-  if (latency <= 0) return 'default' as const
-  if (latency < 200) return 'success' as const
-  if (latency < 500) return 'warning' as const
-  return 'error' as const
-}
-
 if (!proxyStore.proxyGroups.length) {
   refresh()
 }
 </script>
 
 <style scoped>
-.proxy-page {
-  padding: var(--layout-page-padding-y, 16px) var(--layout-page-padding-x, 24px);
-  max-width: var(--layout-page-max-width, 1400px);
-  margin: 0 auto;
+.page-shell {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
   height: 100%;
+}
+
+.proxy-node-list {
+  background: transparent;
+  border-radius: var(--radius-lg);
+}
+
+.active-node-item {
+  background: var(--bg-tertiary);
+  font-weight: 600;
+  color: var(--primary-color);
 }
 
 .proxy-top-bar {
@@ -532,7 +535,7 @@ if (!proxyStore.proxyGroups.length) {
 
 .top-bar-right {
   display: flex;
-  gap: 8px;
+  gap: 12px;
 }
 
 .split-view {
@@ -540,62 +543,64 @@ if (!proxyStore.proxyGroups.length) {
   gap: 0;
   flex: 1;
   min-height: 0;
-  border-radius: 14px;
-  border: 1px solid var(--panel-border);
-  background: var(--panel-bg);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-light);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
   overflow: hidden;
+  box-shadow: 0 4px 24px -6px rgba(0, 0, 0, 0.05);
 }
 
 .group-sidebar {
-  width: 240px;
+  width: 260px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--panel-border);
-  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-light);
+  background: transparent;
 }
 
 .sidebar-title {
-  padding: 14px 16px 8px;
-  font-size: 11px;
+  padding: 20px 20px 12px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   color: var(--text-tertiary);
 }
 
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
-  padding: 0 8px 8px;
+  padding: 0 12px 12px;
 }
 
 .sidebar-item {
-  padding: 10px 12px;
-  border-radius: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.15s ease;
-  margin-bottom: 2px;
+  transition: all var(--transition-fast);
+  margin-bottom: 4px;
 }
 
 .sidebar-item:hover {
-  background: var(--bg-tertiary);
+  background: var(--glass-bg-hover);
 }
 
 .sidebar-item.active {
-  background: rgba(99, 102, 241, 0.08);
+  background: var(--chip-bg);
 }
 
 .sidebar-item-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .sidebar-item-name {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -610,8 +615,8 @@ if (!proxyStore.proxyGroups.length) {
 .sidebar-item-now {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-top: 4px;
+  gap: 6px;
+  margin-top: 6px;
   font-size: 12px;
   color: var(--text-tertiary);
   overflow: hidden;
@@ -635,37 +640,39 @@ if (!proxyStore.proxyGroups.length) {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  background: transparent;
 }
 
 .node-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--panel-border);
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-light);
   flex-shrink: 0;
 }
 
 .node-summary {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
-  font-size: 12px;
+  gap: 16px;
+  padding: 12px 20px;
+  font-size: 13px;
   color: var(--text-secondary);
-  border-bottom: 1px solid var(--panel-border);
+  border-bottom: 1px solid var(--border-light);
   flex-shrink: 0;
+  background: transparent;
 }
 
 .summary-text {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .summary-sep {
   color: var(--text-tertiary);
-  opacity: 0.5;
+  opacity: 0.3;
 }
 
 .summary-spacer {
@@ -675,53 +682,55 @@ if (!proxyStore.proxyGroups.length) {
 .node-grid {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 20px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
   align-content: start;
 }
 
 .node-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid var(--panel-border);
-  background: var(--bg-secondary);
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  background: transparent;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--transition-normal);
 }
 
 .node-card:hover {
-  border-color: var(--border-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  background: var(--glass-bg-hover);
+  border-color: var(--border-color);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 .node-card.active {
-  border-color: rgba(16, 185, 129, 0.45);
-  background: rgba(16, 185, 129, 0.04);
+  background: var(--chip-bg);
+  border-color: var(--success-color);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
 }
 
 .node-card-top {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
 .node-card-name {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -729,13 +738,10 @@ if (!proxyStore.proxyGroups.length) {
 .node-fav-btn {
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--transition-fast);
 }
 
-.node-card:hover .node-fav-btn {
-  opacity: 1;
-}
-
+.node-card:hover .node-fav-btn,
 .node-card.active .node-fav-btn {
   opacity: 1;
 }
@@ -747,12 +753,12 @@ if (!proxyStore.proxyGroups.length) {
 }
 
 .node-flag {
-  width: 1.2em;
-  height: 0.85em;
-  min-width: 1.2em;
+  width: 1.4em;
+  height: 1em;
+  min-width: 1.4em;
   object-fit: cover;
   border-radius: 2px;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05);
 }
 
 .node-empty {
@@ -761,72 +767,81 @@ if (!proxyStore.proxyGroups.length) {
   align-items: center;
   justify-content: center;
   padding: 64px 16px;
-  gap: 12px;
+  gap: 16px;
   color: var(--text-tertiary);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .providers-view {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
 
 .providers-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .provider-card {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 14px;
-  padding: 16px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: 0 4px 24px -6px rgba(0, 0, 0, 0.05);
 }
 
 .provider-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .provider-name {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 700;
   color: var(--text-primary);
 }
 
 .provider-meta {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-tertiary);
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 .provider-node-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
 }
 
 .provider-node-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: var(--bg-tertiary);
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid var(--border-light);
+  transition: all var(--transition-fast);
+}
+
+.provider-node-item:hover {
+  background: var(--glass-bg-hover);
+  border-color: var(--border-color);
 }
 
 .provider-node-name {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 500;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text-primary);
   min-width: 0;
   overflow: hidden;
@@ -842,8 +857,8 @@ if (!proxyStore.proxyGroups.length) {
   .group-sidebar {
     width: 100%;
     border-right: none;
-    border-bottom: 1px solid var(--panel-border);
-    max-height: 200px;
+    border-bottom: 1px solid var(--border-light);
+    max-height: 240px;
   }
 
   .proxy-top-bar {
