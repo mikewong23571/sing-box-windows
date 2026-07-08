@@ -11,109 +11,93 @@
       </template>
     </PageHeader>
 
-
     <!-- Subscription List -->
     <div class="subscription-section">
-      <n-grid v-if="subStore.list.length > 0" responsive="screen" cols="1 s:2 m:3 l:4" :x-gap="20" :y-gap="20">
-        <n-grid-item
-          v-for="(item, index) in subStore.list"
-          :key="index"
-        >
-          <n-card
-            hoverable
-            :bordered="true"
-            :class="{ active: subStore.activeIndex === index }"
-            class="sub-card"
-          >
-            <template #header>
-              <n-flex justify="space-between" align="center">
-                <n-flex align="center">
-                  <n-avatar :class="{ active: subStore.activeIndex === index }" class="sub-icon">
-                    <n-icon size="20"><LinkOutline /></n-icon>
-                  </n-avatar>
-                  <n-flex vertical size="small" style="min-width: 0">
-                    <n-ellipsis :line-clamp="1" :title="item.name" class="sub-name">{{ item.name }}</n-ellipsis>
-                    <n-space size="small">
-                      <n-tag size="small" :bordered="false" round>
-                        {{ item.isManual ? t('sub.manual') : t('sub.urlSubscription') }}
-                      </n-tag>
-                      <n-tag
-                        v-if="subStore.activeIndex === index"
-                        size="small"
-                        :bordered="false"
-                        round
-                      >
-                        {{ t('sub.inUse') }}
-                      </n-tag>
-                      <n-tag
-                        v-if="!item.isManual && (item.autoUpdateIntervalMinutes ?? DEFAULT_AUTO_UPDATE_MINUTES) > 0"
-                        size="small"
-                        round
-                        :bordered="false"
-                      >
-                        <template #icon>
-                          <n-icon size="14"><TimerOutline /></n-icon>
-                        </template>
-                        {{ formatIntervalLabel(item.autoUpdateIntervalMinutes) }}
-                      </n-tag>
-                    </n-space>
-                  </n-flex>
-                </n-flex>
-                <n-dropdown
-                  trigger="hover"
-                  placement="bottom-end"
-                  :options="getDropdownOptions(index)"
-                >
-                  <n-button text class="more-btn">
-                    <n-icon size="20"><EllipsisVerticalOutline /></n-icon>
-                  </n-button>
-                </n-dropdown>
-              </n-flex>
-            </template>
+      <n-grid v-if="subStore.list.length > 0" responsive="screen" cols="1 s:2 m:2 l:3" :x-gap="16" :y-gap="16">
+        <n-grid-item v-for="(item, index) in subStore.list" :key="index">
+          <div :class="['sub-card', { active: subStore.activeIndex === index }]">
+            <!-- Card Header -->
+            <div class="sub-card-header">
+              <div :class="['sub-avatar', { active: subStore.activeIndex === index }]">
+                <n-icon size="18"><LinkOutline /></n-icon>
+              </div>
+              <div class="sub-header-info">
+                <n-ellipsis class="sub-name" :line-clamp="1" :title="item.name">{{ item.name }}</n-ellipsis>
+                <div class="sub-badges">
+                  <span class="badge badge-type">
+                    {{ item.isManual ? t('sub.manual') : t('sub.urlSubscription') }}
+                  </span>
+                  <span v-if="subStore.activeIndex === index" class="badge badge-active">
+                    <span class="badge-dot" />{{ t('sub.inUse') }}
+                  </span>
+                  <span v-if="!item.isManual && (item.autoUpdateIntervalMinutes ?? DEFAULT_AUTO_UPDATE_MINUTES) > 0" class="badge badge-timer">
+                    <n-icon size="11"><TimerOutline /></n-icon>
+                    {{ formatIntervalLabel(item.autoUpdateIntervalMinutes) }}
+                  </span>
+                </div>
+              </div>
+              <n-dropdown trigger="hover" placement="bottom-end" :options="getDropdownOptions(index)">
+                <n-button text class="more-btn">
+                  <n-icon size="18"><EllipsisVerticalOutline /></n-icon>
+                </n-button>
+              </n-dropdown>
+            </div>
 
-            <n-flex vertical size="small">
-              <n-flex align="center" :wrap="false" class="info-row" :title="item.url || t('sub.manualContent')">
-                <n-icon size="14"><GlobeOutline /></n-icon>
-                <n-ellipsis :tooltip="false" class="info-text">{{ item.url || t('sub.manualContent') }}</n-ellipsis>
-              </n-flex>
-              <n-flex align="center" :wrap="false" class="info-row">
-                <n-icon size="14"><TimeOutline /></n-icon>
-                <n-ellipsis :tooltip="false" class="info-text">
+            <!-- Traffic Bar (if available) -->
+            <div v-if="hasSubscriptionTraffic(item)" class="traffic-section">
+              <div class="traffic-bar-row">
+                <span class="traffic-label">{{ t('sub.traffic') }}</span>
+                <span class="traffic-value">{{ formatTrafficSummary(item) }}</span>
+              </div>
+              <div class="traffic-bar-bg">
+                <div
+                  class="traffic-bar-fill"
+                  :style="{ width: getTrafficPercent(item) + '%' }"
+                  :class="getTrafficClass(item)"
+                />
+              </div>
+            </div>
+
+            <!-- Meta Info -->
+            <div class="sub-meta">
+              <div class="meta-row" :title="item.url || t('sub.manualContent')">
+                <n-icon size="13" class="meta-icon"><GlobeOutline /></n-icon>
+                <span class="meta-text url-text">{{ item.url || t('sub.manualContent') }}</span>
+              </div>
+              <div class="meta-row">
+                <n-icon size="13" class="meta-icon"><TimeOutline /></n-icon>
+                <span class="meta-text">
                   {{ item.lastUpdate ? formatTime(item.lastUpdate) : t('sub.neverUsed') }}
-                </n-ellipsis>
-              </n-flex>
-              <n-flex align="center" :wrap="false" v-if="hasSubscriptionTraffic(item)" class="info-row">
-                <n-icon size="14"><StatsChartOutline /></n-icon>
-                <n-ellipsis :tooltip="false" class="info-text">{{ formatTrafficSummary(item) }}</n-ellipsis>
-              </n-flex>
-              <n-flex align="center" :wrap="false" v-if="item.subscriptionExpire" class="info-row">
-                <n-icon size="14"><CalendarOutline /></n-icon>
-                <n-ellipsis :tooltip="false" class="info-text">{{ formatExpireTime(item.subscriptionExpire) }}</n-ellipsis>
-              </n-flex>
-              <n-flex align="center" :wrap="false" v-if="item.autoUpdateFailCount && item.autoUpdateFailCount > 0" class="info-row warn">
-                <n-icon size="14"><AlertCircleOutline /></n-icon>
-                <n-ellipsis :tooltip="false" class="info-text">{{ formatAutoUpdateHealth(item) }}</n-ellipsis>
-              </n-flex>
-            </n-flex>
+                </span>
+              </div>
+              <div v-if="item.subscriptionExpire" class="meta-row">
+                <n-icon size="13" class="meta-icon"><CalendarOutline /></n-icon>
+                <span class="meta-text">{{ formatExpireTime(item.subscriptionExpire) }}</span>
+              </div>
+              <div v-if="item.autoUpdateFailCount && item.autoUpdateFailCount > 0" class="meta-row warn">
+                <n-icon size="13" class="meta-icon"><AlertCircleOutline /></n-icon>
+                <span class="meta-text">{{ formatAutoUpdateHealth(item) }}</span>
+              </div>
+            </div>
 
-            <template #action>
-              <n-button
-                block
-                :type="subStore.activeIndex === index ? 'success' : 'primary'"
-                secondary
-                :loading="item.isLoading"
-                @click="useSubscription(index)"
-              >
-                <template #icon>
-                  <n-icon>
-                    <CheckmarkCircleOutline v-if="subStore.activeIndex === index" />
-                    <PlayCircleOutline v-else />
-                  </n-icon>
-                </template>
-                {{ subStore.activeIndex === index ? t('sub.useAgain') : t('sub.use') }}
-              </n-button>
-            </template>
-          </n-card>
+            <!-- Action -->
+            <n-button
+              block
+              :type="subStore.activeIndex === index ? 'success' : 'primary'"
+              secondary
+              :loading="item.isLoading"
+              class="sub-action-btn"
+              @click="useSubscription(index)"
+            >
+              <template #icon>
+                <n-icon>
+                  <CheckmarkCircleOutline v-if="subStore.activeIndex === index" />
+                  <PlayCircleOutline v-else />
+                </n-icon>
+              </template>
+              {{ subStore.activeIndex === index ? t('sub.useAgain') : t('sub.use') }}
+            </n-button>
+          </div>
         </n-grid-item>
       </n-grid>
 
@@ -290,7 +274,6 @@ import {
   EllipsisVerticalOutline,
   GlobeOutline,
   TimeOutline,
-  StatsChartOutline,
   CalendarOutline,
   AlertCircleOutline,
   RefreshOutline,
@@ -745,6 +728,20 @@ const formatExpireTime = (timestamp?: number) => formatExpireTimeText(timestamp,
 const formatTime = (timestamp: number): string => formatLocalTime(timestamp)
 const formatAutoUpdateHealth = (item: Subscription) => formatAutoUpdateHealthText(item, t)
 
+const getTrafficPercent = (item: Subscription): number => {
+  const total = item.subscriptionTotal
+  const used = (item.subscriptionUpload ?? 0) + (item.subscriptionDownload ?? 0)
+  if (!total || total <= 0) return 0
+  return Math.min(100, Math.round((used / total) * 100))
+}
+
+const getTrafficClass = (item: Subscription): string => {
+  const pct = getTrafficPercent(item)
+  if (pct >= 90) return 'danger'
+  if (pct >= 70) return 'warning'
+  return 'normal'
+}
+
 const regenerateConfigFor = async (item: Subscription) => {
   const persistOptions = { fileName: generateConfigFileName(item.name || 'sub'), applyRuntime: false }
   if (item.isManual) {
@@ -841,47 +838,49 @@ onUnmounted(() => {
   height: 100%;
 }
 
-
-.subscription-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: var(--layout-subscription-gap, 20px);
+.subscription-section {
+  flex: 1;
+  overflow-y: auto;
 }
 
+/* ── Subscription Card ─────────────────────────────────── */
 .sub-card {
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  padding: 24px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
+  padding: 18px 20px;
+  border-radius: var(--radius-lg);
+  border: 1.5px solid var(--border-light);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
   transition: all var(--transition-normal);
-  box-shadow: 0 4px 24px -6px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 2px 12px -4px rgba(0, 0, 0, 0.06);
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .sub-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.08);
   border-color: var(--border-hover);
+  box-shadow: 0 6px 24px -6px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
 }
 
 .sub-card.active {
   border-color: var(--primary-color);
   background: var(--bg-primary);
-  box-shadow: 0 8px 32px -8px rgba(99, 102, 241, 0.15);
+  box-shadow: 0 6px 24px -6px rgba(99, 102, 241, 0.18);
 }
 
+/* ── Card Header ───────────────────────────────────────── */
 .sub-card-header {
   display: flex;
-  gap: 12px;
   align-items: flex-start;
+  gap: 12px;
 }
 
-.sub-icon {
-  width: 40px;
-  height: 40px;
+.sub-avatar {
+  width: 38px;
+  height: 38px;
   border-radius: 10px;
   background: var(--bg-tertiary);
   display: flex;
@@ -889,14 +888,16 @@ onUnmounted(() => {
   justify-content: center;
   color: var(--text-secondary);
   flex-shrink: 0;
+  margin-top: 2px;
+  transition: background var(--transition-fast);
 }
 
-.sub-icon.active {
+.sub-avatar.active {
   background: var(--primary-color);
-  color: white;
+  color: #fff;
 }
 
-.sub-info {
+.sub-header-info {
   flex: 1;
   min-width: 0;
   display: flex;
@@ -905,58 +906,161 @@ onUnmounted(() => {
 }
 
 .sub-name {
+  font-size: 15px;
   font-weight: 600;
-  font-size: 16px;
   color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.3;
 }
 
-.sub-tags {
+/* ── Badges ────────────────────────────────────────────── */
+.sub-badges {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+  align-items: center;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 20px;
+  line-height: 1.6;
+}
+
+.badge-type {
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+}
+
+.badge-active {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--success-color, #10b981);
+}
+
+.badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.badge-timer {
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
 }
 
 .more-btn {
   color: var(--text-tertiary);
+  flex-shrink: 0;
+  margin-top: 2px;
 }
-
 .more-btn:hover {
   color: var(--text-primary);
 }
 
-.sub-card-body {
+/* ── Traffic Section ───────────────────────────────────── */
+.traffic-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
+  gap: 6px;
+}
+
+.traffic-bar-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.traffic-label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.traffic-value {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.traffic-bar-bg {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.traffic-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.traffic-bar-fill.normal {
+  background: linear-gradient(90deg, var(--primary-color), #818cf8);
+}
+
+.traffic-bar-fill.warning {
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+
+.traffic-bar-fill.danger {
+  background: linear-gradient(90deg, #ef4444, #f87171);
+}
+
+/* ── Meta Info ─────────────────────────────────────────── */
+.sub-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
   background: var(--bg-tertiary);
   border-radius: 8px;
+  flex: 1;
 }
 
-.info-row {
+.meta-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
+  font-size: 12.5px;
   color: var(--text-secondary);
-  font-size: 13px;
+  min-width: 0;
 }
 
-.info-row.warn {
+.meta-row.warn {
   color: #f59e0b;
 }
 
-.info-text {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.meta-icon {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
 }
 
-.sub-card-footer {
+.meta-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.url-text {
+  font-family: monospace;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+/* ── Action Button ─────────────────────────────────────── */
+.sub-action-btn {
   margin-top: auto;
 }
 
+/* ── Empty State ───────────────────────────────────────── */
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -964,56 +1068,6 @@ onUnmounted(() => {
   justify-content: center;
   padding: 64px 0;
   color: var(--text-secondary);
-}
-
-.empty-icon {
-  margin-bottom: 16px;
-  opacity: 0.5;
-}
-
-.empty-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 0 0 8px;
-  color: var(--text-primary);
-}
-
-.empty-desc {
-  margin-bottom: 24px;
-  color: var(--text-tertiary);
-}
-
-.form-switch {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px;
-  background: var(--bg-tertiary);
-  border-radius: 8px;
-  margin-top: 16px;
-}
-
-.form-hint {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-.form-hint.warning {
-  color: #f59e0b;
-}
-
-.switch-label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.switch-desc {
-  font-size: 12px;
-  color: var(--text-tertiary);
 }
 
 .code-input {

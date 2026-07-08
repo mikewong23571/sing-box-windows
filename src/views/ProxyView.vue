@@ -7,7 +7,6 @@
             <template #icon><n-icon><RefreshOutline /></n-icon></template>
             {{ t('common.refresh') }}
           </n-button>
-          
           <n-button type="primary" secondary :loading="proxyStore.batchTesting" @click="batchTest">
             <template #icon><n-icon><SpeedometerOutline /></n-icon></template>
             {{ t('proxy.batchTest') }}
@@ -16,155 +15,170 @@
       </template>
     </PageHeader>
 
-    <n-tabs v-model:value="proxyStore.viewTab" type="segment" size="small" style="margin-bottom: 16px; width: 240px;">
+    <n-tabs v-model:value="proxyStore.viewTab" type="segment" size="small" style="width: 240px; flex-shrink: 0;">
       <n-tab-pane name="groups" :tab="t('proxy.groupsTab')" />
       <n-tab-pane name="providers" :tab="t('proxy.providersTab')" />
     </n-tabs>
 
-    <n-flex v-if="proxyStore.viewTab === 'groups'" vertical size="large" class="node-panel">
-      <n-flex align="center" :wrap="false" class="node-toolbar">
+    <!-- Groups View -->
+    <n-flex v-if="proxyStore.viewTab === 'groups'" vertical size="large" class="groups-view">
+      <!-- Toolbar -->
+      <n-flex align="center" :wrap="false" gap="8" class="proxy-toolbar">
         <n-input v-model:value="searchQuery" size="small" :placeholder="t('proxy.searchNode')" clearable style="flex: 1">
-          <template #prefix>
-            <n-icon><SearchOutline /></n-icon>
-          </template>
+          <template #prefix><n-icon><SearchOutline /></n-icon></template>
         </n-input>
         <n-select v-model:value="proxyStore.ordering" size="small" :options="orderingOptions" style="width: 120px" />
-        <n-button size="small" quaternary :type="favoritesOnly ? 'primary' : 'default'" @click="favoritesOnly = !favoritesOnly">
-          <template #icon>
-            <n-icon>
-              <Star v-if="favoritesOnly" />
-              <StarOutline v-else />
-            </n-icon>
-          </template>
-        </n-button>
-        <n-button
-          size="small"
-          quaternary
-          :type="proxyStore.hideUnavailable ? 'primary' : 'default'"
-          @click="proxyStore.hideUnavailable = !proxyStore.hideUnavailable"
-          :title="proxyStore.hideUnavailable ? t('proxy.hideUnavailable') : t('proxy.showAll')"
-        >
-          <template #icon>
-            <n-icon>
-              <EyeOffOutline v-if="proxyStore.hideUnavailable" />
-              <EyeOutline v-else />
-            </n-icon>
-          </template>
-        </n-button>
+        <n-tooltip :content="favoritesOnly ? t('proxy.showAll') : t('proxy.favorites')">
+          <n-button size="small" quaternary :type="favoritesOnly ? 'primary' : 'default'" @click="favoritesOnly = !favoritesOnly">
+            <template #icon>
+              <n-icon><Star v-if="favoritesOnly" /><StarOutline v-else /></n-icon>
+            </template>
+          </n-button>
+        </n-tooltip>
+        <n-tooltip :content="proxyStore.hideUnavailable ? t('proxy.showAll') : t('proxy.hideUnavailable')">
+          <n-button size="small" quaternary :type="proxyStore.hideUnavailable ? 'primary' : 'default'" @click="proxyStore.hideUnavailable = !proxyStore.hideUnavailable">
+            <template #icon>
+              <n-icon><EyeOffOutline v-if="proxyStore.hideUnavailable" /><EyeOutline v-else /></n-icon>
+            </template>
+          </n-button>
+        </n-tooltip>
       </n-flex>
 
+      <!-- Group Collapse -->
       <n-collapse v-if="filteredGroups.length" :default-expanded-names="[proxyStore.selectedGroup]" accordion>
         <n-collapse-item
           v-for="group in filteredGroups"
           :key="group.name"
           :name="group.name"
         >
+          <!-- Group Header -->
           <template #header>
-            <n-space align="center">
-              <n-text strong>{{ group.name }}</n-text>
-              <n-tag size="tiny" round :bordered="false">{{ group.type }}</n-tag>
-            </n-space>
+            <div class="group-header">
+              <span class="group-name">{{ group.name }}</span>
+              <n-tag size="tiny" round :bordered="false" class="group-type-tag">{{ group.type }}</n-tag>
+            </div>
           </template>
+
+          <!-- Group Header Extra: current node + actions -->
           <template #header-extra>
-            <n-space align="center">
-              <n-text depth="3" style="font-size: 13px">{{ group.now ? getDisplayNodeName(group.now) : '-' }}</n-text>
-            </n-space>
+            <n-flex align="center" gap="8" @click.stop>
+              <!-- Current node pill -->
+              <div class="current-node-pill" v-if="group.now">
+                <img
+                  v-if="getNodeFlagUrl(group.now)"
+                  class="node-flag"
+                  :src="getNodeFlagUrl(group.now)"
+                  alt=""
+                />
+                <span class="node-icon-fallback" v-else>{{ getNodeIcon(group.now) }}</span>
+                <span class="current-node-name">{{ getDisplayNodeName(group.now) }}</span>
+              </div>
+              <!-- Inline action buttons -->
+              <n-tooltip :content="t('proxy.autoSelect')">
+                <n-button size="tiny" quaternary @click.stop="switchRecommended(group)">
+                  <template #icon><n-icon><FlashOutline /></n-icon></template>
+                </n-button>
+              </n-tooltip>
+              <n-tooltip :content="t('proxy.testNode')">
+                <n-button
+                  size="tiny"
+                  quaternary
+                  :loading="proxyStore.groupTestingMap[group.name]"
+                  @click.stop="testGroupDelay(group.name)"
+                >
+                  <template #icon><n-icon><SpeedometerOutline /></n-icon></template>
+                </n-button>
+              </n-tooltip>
+            </n-flex>
           </template>
 
-          <n-card size="small" style="margin-bottom: 12px; background: transparent;">
-            <n-flex align="center" justify="space-between">
-              <n-space align="center">
-                <n-text strong>{{ t('proxy.recommended') }}</n-text>
-                <n-text v-if="proxyStore.getRecommendedNode(group)">
-                  <img
-                    v-if="getNodeFlagUrl(proxyStore.getRecommendedNode(group))"
-                    class="node-flag"
-                    :src="getNodeFlagUrl(proxyStore.getRecommendedNode(group))"
-                    alt=""
-                    style="height: 14px; border-radius: 2px; vertical-align: middle; margin-right: 4px;"
-                  />
-                  {{ getDisplayNodeName(proxyStore.getRecommendedNode(group)) }}
-                </n-text>
-                <n-text v-else>-</n-text>
-                <n-divider vertical />
-                <n-text>{{ group.all.length }} {{ t('proxy.nodes') }}</n-text>
-                <n-divider vertical />
-                <n-text>{{ t('proxy.favorites') }} {{ group.all.filter(n => proxyStore.isFavorite(n)).length }}</n-text>
-              </n-space>
-              <n-space>
-                <n-button size="small" secondary @click.stop="testGroupDelay(group.name)" :loading="proxyStore.groupTestingMap[group.name]">
-                  {{ t('proxy.testNode') }}
-                </n-button>
-                <n-button size="small" tertiary @click.stop="switchRecommended(group)">
-                  {{ t('proxy.autoSelect') }}
-                </n-button>
-              </n-space>
-            </n-flex>
-          </n-card>
+          <!-- Node List -->
+          <div class="node-list-wrap">
+            <!-- Recommended banner (shown only when a recommendation exists) -->
+            <div v-if="proxyStore.getRecommendedNode(group)" class="recommended-banner">
+              <n-icon size="13" class="rec-icon"><TrophyOutline /></n-icon>
+              <span class="rec-label">{{ t('proxy.recommended') }}</span>
+              <img
+                v-if="getNodeFlagUrl(proxyStore.getRecommendedNode(group))"
+                class="node-flag"
+                :src="getNodeFlagUrl(proxyStore.getRecommendedNode(group))"
+                alt=""
+              />
+              <span class="node-icon-fallback" v-else>{{ getNodeIcon(proxyStore.getRecommendedNode(group)) }}</span>
+              <span class="rec-name">{{ getDisplayNodeName(proxyStore.getRecommendedNode(group)) }}</span>
+              <span class="rec-count">{{ group.all.length }} {{ t('proxy.nodes') }}</span>
+              <span v-if="group.all.filter(n => proxyStore.isFavorite(n)).length" class="rec-count">
+                ★ {{ group.all.filter(n => proxyStore.isFavorite(n)).length }}
+              </span>
+            </div>
 
-          <n-list
-            v-if="getFilteredGroupNodes(group).length"
-            hoverable
-            clickable
-            class="proxy-node-list"
-            :show-divider="true"
-          >
-            <n-list-item
-              v-for="node in getFilteredGroupNodes(group)"
-              :key="node"
-              :class="{ 'active-node-item': group.now === node }"
-              @click="changeProxy(group.name, node)"
-              style="padding: 12px 16px;"
-            >
-              <n-flex justify="space-between" align="center" :wrap="false">
-                <n-flex align="center" :wrap="false" style="flex: 1; overflow: hidden; min-width: 0;">
-                  <img v-if="getNodeFlagUrl(node)" class="node-flag" :src="getNodeFlagUrl(node)" alt="" style="height: 14px; border-radius: 2px; vertical-align: middle; margin-right: 8px;" />
-                  <n-ellipsis :tooltip="true" style="flex: 1;">
-                    <n-text :strong="group.now === node">{{ getDisplayNodeName(node) }}</n-text>
-                  </n-ellipsis>
-                </n-flex>
-                
-                <n-flex align="center" :wrap="false" style="min-width: 140px; justify-content: flex-end;">
+            <div v-if="getFilteredGroupNodes(group).length" class="node-list">
+              <div
+                v-for="node in getFilteredGroupNodes(group)"
+                :key="node"
+                :class="['node-row', { 'node-row--active': group.now === node }]"
+                @click="changeProxy(group.name, node)"
+              >
+                <!-- Active indicator -->
+                <span class="node-active-dot" v-if="group.now === node" />
+
+                <!-- Flag / Icon -->
+                <div class="node-icon-wrap">
+                  <img v-if="getNodeFlagUrl(node)" class="node-flag" :src="getNodeFlagUrl(node)" alt="" />
+                  <span v-else class="node-icon-text">{{ getNodeIcon(node) }}</span>
+                </div>
+
+                <!-- Name -->
+                <div class="node-name-wrap">
+                  <span :class="['node-name', { 'node-name--active': group.now === node }]">
+                    {{ getDisplayNodeName(node) }}
+                  </span>
                   <n-tag
-                    size="small"
+                    v-if="group.now === node"
+                    size="tiny"
                     round
+                    type="success"
                     :bordered="false"
-                    style="margin-right: 8px;"
+                    class="node-in-use-tag"
                   >
-                    {{ formatLatency(node) }}
+                    {{ t('sub.inUse') }}
                   </n-tag>
+                </div>
+
+                <!-- Right: latency + actions -->
+                <div class="node-right">
+                  <span :class="['node-latency', getLatencyClass(node)]">{{ formatLatency(node) }}</span>
                   <n-button
-                    size="small"
+                    size="tiny"
                     quaternary
                     :loading="proxyStore.nodeTestingMap[node]"
                     @click.stop="testNode(node)"
-                    style="margin-right: 4px;"
+                    class="node-action-btn"
                   >
-                    <template #icon>
-                      <n-icon size="14"><SpeedometerOutline /></n-icon>
-                    </template>
+                    <template #icon><n-icon size="13"><SpeedometerOutline /></n-icon></template>
                   </n-button>
-                  <n-button text size="tiny" @click.stop="proxyStore.toggleFavorite(node)">
-                    <n-icon size="18">
+                  <n-button text size="tiny" @click.stop="proxyStore.toggleFavorite(node)" class="node-action-btn">
+                    <n-icon size="15">
                       <Star v-if="proxyStore.isFavorite(node)" style="color: #f59e0b" />
                       <StarOutline v-else />
                     </n-icon>
                   </n-button>
-                </n-flex>
-              </n-flex>
-            </n-list-item>
-          </n-list>
-          <n-empty v-else :description="t('proxy.noNodes')" style="margin-top: 24px;">
-            <template #icon><n-icon><ServerOutline /></n-icon></template>
-          </n-empty>
+                </div>
+              </div>
+            </div>
+            <n-empty v-else :description="t('proxy.noNodes')" style="padding: 24px 0;">
+              <template #icon><n-icon><ServerOutline /></n-icon></template>
+            </n-empty>
+          </div>
         </n-collapse-item>
       </n-collapse>
-      
+
       <n-empty v-else :description="t('proxy.noProxyGroups')" style="margin-top: 48px;">
         <template #icon><n-icon><GlobeOutline /></n-icon></template>
       </n-empty>
     </n-flex>
 
+    <!-- Providers View -->
     <n-flex v-else vertical size="large" class="providers-view">
       <n-grid v-if="filteredProviders.length" responsive="screen" cols="1" :y-gap="16">
         <n-grid-item v-for="provider in filteredProviders" :key="provider.name">
@@ -190,15 +204,16 @@
             </template>
             <n-grid responsive="screen" cols="1 s:2 m:3 l:4 xl:5" :x-gap="12" :y-gap="12">
               <n-grid-item v-for="proxy in getProviderNodes(provider)" :key="proxy.name">
-                <n-card size="small" class="provider-node-item">
-                  <n-flex justify="space-between" align="center" :wrap="false">
-                    <n-ellipsis :tooltip="false" style="flex: 1">
-                      <img v-if="getNodeFlagUrl(proxy.name)" class="node-flag" :src="getNodeFlagUrl(proxy.name)" alt="" style="height: 14px; border-radius: 2px; vertical-align: middle; margin-right: 4px;" />
-                      <n-text>{{ getDisplayNodeName(proxy.name) }}</n-text>
+                <div class="provider-node-card">
+                  <div class="provider-node-left">
+                    <img v-if="getNodeFlagUrl(proxy.name)" class="node-flag" :src="getNodeFlagUrl(proxy.name)" alt="" />
+                    <span v-else class="node-icon-text">{{ getNodeIcon(proxy.name) }}</span>
+                    <n-ellipsis :tooltip="false" style="flex: 1; font-size: 13px;">
+                      {{ getDisplayNodeName(proxy.name) }}
                     </n-ellipsis>
-                    <n-tag size="small" round :bordered="false">{{ formatLatency(proxy.name) }}</n-tag>
-                  </n-flex>
-                </n-card>
+                  </div>
+                  <span :class="['node-latency', getLatencyClass(proxy.name)]">{{ formatLatency(proxy.name) }}</span>
+                </div>
               </n-grid-item>
             </n-grid>
           </n-card>
@@ -223,7 +238,10 @@ import {
   Star,
   StarOutline,
   EyeOutline,
-  EyeOffOutline
+  EyeOffOutline,
+  FlashOutline,
+  TrophyOutline,
+  ServerOutline,
 } from '@vicons/ionicons5'
 import { useProxyStore, type ProxyGroup } from '@/stores/kernel/ProxyStore'
 import { useI18n } from 'vue-i18n'
@@ -291,6 +309,23 @@ const informationalNodePatterns = [
   /^https?:\/\//i,
 ]
 
+// Special node name → icon mapping
+const specialNodeIcons: Record<string, string> = {
+  DIRECT: '⟶',
+  direct: '⟶',
+  REJECT: '✕',
+  reject: '✕',
+  BLOCK: '✕',
+  block: '✕',
+  AUTO: '⚡',
+  auto: '⚡',
+  PROXY: '◈',
+  proxy: '◈',
+  GLOBAL: '◈',
+  global: '◈',
+  SELECTOR: '▾',
+}
+
 const getFlagIconCountryCode = (code: string) => {
   if (code === 'EU') return 'eu'
   const normalizedCode = countryCodeAliases[code] || code
@@ -307,7 +342,7 @@ const isInformationalNodeName = (nodeName: string) =>
 const normalizeCountryLabel = (value: string) =>
   value
     .toLowerCase()
-    .replace(/[\s·・,，.。()（）[\]【】'’"“”_-]/g, '')
+    .replace(/[\s·・,，.。()（）[\]【】''""\\"_-]/g, '')
     .trim()
 
 const getLocalizedCountryNameEntries = () => {
@@ -380,10 +415,6 @@ const filteredProviders = computed(() => {
     )
   })
 })
-
-const selectGroup = (name: string) => {
-  proxyStore.selectedGroup = name
-}
 
 const refresh = async () => {
   try {
@@ -492,9 +523,32 @@ const getNodeFlagUrl = (nodeName?: string | null) => {
   return countryCode ? flagIconUrls[`../../node_modules/flag-icons/flags/4x3/${countryCode}.svg`] || '' : ''
 }
 
+/**
+ * Returns a text icon for nodes without a country flag (DIRECT, REJECT, etc.)
+ */
+const getNodeIcon = (nodeName?: string | null): string => {
+  if (!nodeName) return '○'
+  const upper = nodeName.toUpperCase().trim()
+  for (const [key, icon] of Object.entries(specialNodeIcons)) {
+    if (upper === key.toUpperCase()) return icon
+  }
+  // Informational nodes
+  if (isInformationalNodeName(stripLeadingFlagEmoji(nodeName))) return 'ℹ'
+  // Generic proxy node without a detected country
+  return '○'
+}
+
 const formatLatency = (proxyName: string) => {
   const latency = proxyStore.getLatency(proxyName)
-  return latency > 0 ? `${latency}ms` : t('proxy.clickToTest')
+  return latency > 0 ? `${latency}ms` : '-'
+}
+
+const getLatencyClass = (proxyName: string): string => {
+  const latency = proxyStore.getLatency(proxyName)
+  if (latency <= 0) return 'latency-none'
+  if (latency <= 200) return 'latency-good'
+  if (latency <= 500) return 'latency-mid'
+  return 'latency-high'
 }
 
 if (!proxyStore.proxyGroups.length) {
@@ -506,364 +560,244 @@ if (!proxyStore.proxyGroups.length) {
 .page-shell {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
   height: 100%;
 }
 
-.proxy-node-list {
-  background: transparent;
-  border-radius: var(--radius-lg);
-}
-
-.active-node-item {
-  background: var(--bg-tertiary);
-  font-weight: 600;
-  color: var(--primary-color);
-}
-
-.proxy-top-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-shrink: 0;
-}
-
-.top-bar-left {
-  flex-shrink: 0;
-}
-
-.top-bar-right {
-  display: flex;
-  gap: 12px;
-}
-
-.split-view {
-  display: flex;
-  gap: 0;
+.groups-view {
   flex: 1;
-  min-height: 0;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-light);
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
   overflow: hidden;
-  box-shadow: 0 4px 24px -6px rgba(0, 0, 0, 0.05);
-}
-
-.group-sidebar {
-  width: 260px;
-  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border-light);
-  background: transparent;
 }
 
-.sidebar-title {
-  padding: 20px 20px 12px;
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-tertiary);
-}
-
-.sidebar-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0 12px 12px;
-}
-
-.sidebar-item {
-  padding: 12px 14px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  margin-bottom: 4px;
-}
-
-.sidebar-item:hover {
-  background: var(--glass-bg-hover);
-}
-
-.sidebar-item.active {
-  background: var(--chip-bg);
-}
-
-.sidebar-item-main {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.sidebar-item-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-item.active .sidebar-item-name {
-  color: var(--primary-color);
-}
-
-.sidebar-item-now {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 48px 16px;
-  gap: 12px;
-  color: var(--text-tertiary);
-  font-size: 13px;
-}
-
-.node-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  background: transparent;
-}
-
-.node-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-light);
+/* ── Toolbar ───────────────────────────────────────────── */
+.proxy-toolbar {
   flex-shrink: 0;
 }
 
-.node-summary {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 20px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-light);
-  flex-shrink: 0;
-  background: transparent;
-}
-
-.summary-text {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.summary-sep {
-  color: var(--text-tertiary);
-  opacity: 0.3;
-}
-
-.summary-spacer {
-  flex: 1;
-}
-
-.node-grid {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 16px;
-  align-content: start;
-}
-
-.node-card {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-light);
-  background: transparent;
-  cursor: pointer;
-  transition: all var(--transition-normal);
-}
-
-.node-card:hover {
-  background: var(--glass-bg-hover);
-  border-color: var(--border-color);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-}
-
-.node-card.active {
-  background: var(--chip-bg);
-  border-color: var(--success-color);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
-}
-
-.node-card-top {
+/* ── Group Header ──────────────────────────────────────── */
+.group-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 0;
 }
 
-.node-card-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
+.group-name {
   font-weight: 600;
+  font-size: 14px;
   color: var(--text-primary);
 }
 
-.node-fav-btn {
+.group-type-tag {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+/* ── Current node pill ─────────────────────────────────── */
+.current-node-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 10px 2px 6px;
+  background: var(--bg-tertiary);
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  max-width: 160px;
+  overflow: hidden;
+}
+
+.current-node-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Recommended banner ────────────────────────────────── */
+.recommended-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  margin-bottom: 4px;
+  background: linear-gradient(90deg, rgba(99,102,241,0.07) 0%, transparent 100%);
+  border-left: 3px solid var(--primary-color);
+  border-radius: 0 6px 6px 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.rec-icon {
+  color: var(--primary-color);
   flex-shrink: 0;
+}
+
+.rec-label {
+  font-weight: 600;
+  color: var(--primary-color);
+  flex-shrink: 0;
+}
+
+.rec-name {
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.rec-count {
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  margin-left: 4px;
+}
+
+/* ── Node List ─────────────────────────────────────────── */
+.node-list-wrap {
+  padding: 4px 0;
+}
+
+.node-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.node-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  position: relative;
+}
+
+.node-row:hover {
+  background: var(--glass-bg-hover);
+}
+
+.node-row--active {
+  background: var(--bg-tertiary);
+}
+
+/* Active left bar */
+.node-active-dot {
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: 2px;
+  background: var(--success-color, #10b981);
+}
+
+/* Node icon (flag or text) */
+.node-icon-wrap {
+  width: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.node-flag {
+  width: 20px;
+  height: 14px;
+  object-fit: cover;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.node-icon-text {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  line-height: 1;
+  font-family: monospace;
+  user-select: none;
+}
+
+.node-icon-fallback {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  line-height: 1;
+}
+
+/* Node name */
+.node-name-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.node-name {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-name--active {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.node-in-use-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+}
+
+/* Right side */
+.node-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.node-latency {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
+  text-align: right;
+}
+
+.latency-none  { color: var(--text-tertiary); }
+.latency-good  { color: #10b981; }
+.latency-mid   { color: #f59e0b; }
+.latency-high  { color: #ef4444; }
+
+.node-action-btn {
   opacity: 0;
   transition: opacity var(--transition-fast);
 }
 
-.node-card:hover .node-fav-btn,
-.node-card.active .node-fav-btn {
+.node-row:hover .node-action-btn {
   opacity: 1;
 }
 
-.node-card-bottom {
+/* ── Provider Nodes ────────────────────────────────────── */
+.provider-node-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.node-flag {
-  width: 1.4em;
-  height: 1em;
-  min-width: 1.4em;
-  object-fit: cover;
-  border-radius: 2px;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05);
-}
-
-.node-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 64px 16px;
-  gap: 16px;
-  color: var(--text-tertiary);
-  font-size: 14px;
-}
-
-.providers-view {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.providers-list {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.provider-card {
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  padding: 20px;
-  box-shadow: 0 4px 24px -6px rgba(0, 0, 0, 0.05);
-}
-
-.provider-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.provider-name {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.provider-meta {
-  font-size: 13px;
-  color: var(--text-tertiary);
-  margin-top: 4px;
-}
-
-.provider-node-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
-}
-
-.provider-node-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  background: transparent;
-  border: 1px solid var(--border-light);
-  transition: all var(--transition-fast);
-}
-
-.provider-node-item:hover {
-  background: var(--glass-bg-hover);
-  border-color: var(--border-color);
-}
-
-.provider-node-name {
-  display: inline-flex;
-  align-items: center;
   gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-tertiary);
   font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-@media (max-width: 900px) {
-  .split-view {
-    flex-direction: column;
-  }
-
-  .group-sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--border-light);
-    max-height: 240px;
-  }
-
-  .proxy-top-bar {
-    flex-direction: column;
-    align-items: stretch;
-  }
+.provider-node-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
 }
 </style>
