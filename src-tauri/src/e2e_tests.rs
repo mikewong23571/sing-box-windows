@@ -14,7 +14,8 @@ use crate::app::core::kernel_service::readiness::{
     verify_kernel_startup_stability_with_config, StabilityCheckConfig,
 };
 use crate::app::core::kernel_service::status::{
-    collect_kernel_runtime_probe, is_kernel_running, kernel_check_health, probe_version_api,
+    collect_kernel_runtime_probe, is_kernel_running, is_kernel_running_with_process,
+    kernel_check_health, probe_version_api,
 };
 use crate::app::core::kernel_service::PROCESS_MANAGER;
 use crate::app::core::proxy_service::{
@@ -844,7 +845,9 @@ async fn l3_22_process_status_and_health_modules() {
         .await
         .unwrap();
     assert!(manager.is_running().await);
-    let running = is_kernel_running().await.unwrap_or(false);
+    let running = is_kernel_running_with_process::<tauri::Wry>(&manager)
+        .await
+        .unwrap_or(false);
     assert!(running);
     let health = kernel_check_health(Some(1)).await.unwrap();
     assert!(health.get("healthy").is_some());

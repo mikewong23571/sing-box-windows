@@ -2,8 +2,8 @@ use crate::app::constants::common::messages;
 use crate::app::core::kernel_service::guard::{disable_kernel_guard, enable_kernel_guard};
 use crate::app::core::kernel_service::orchestrator::execute_kernel_operation;
 use crate::app::core::kernel_service::readiness::{
-    classify_startup_stability_failure, verify_kernel_startup_stability,
-    verify_kernel_startup_stability_with_config, StabilityCheckConfig,
+    classify_startup_stability_failure,
+    verify_kernel_startup_stability_with_process_with_config, StabilityCheckConfig,
 };
 use crate::app::core::kernel_service::relay::{
     cleanup_event_relay_tasks, start_websocket_relay, SHOULD_STOP_EVENTS,
@@ -354,7 +354,13 @@ pub(crate) async fn start_kernel_process_and_verify_with_config<R: tauri::Runtim
     }
 
     if process.is_running().await {
-        if let Err(e) = verify_kernel_startup_stability_with_config(api_port, stability).await {
+        if let Err(e) = verify_kernel_startup_stability_with_process_with_config(
+            process,
+            api_port,
+            stability,
+        )
+        .await
+        {
             KERNEL_STATE.update_readiness(|readiness| {
                 readiness.api_ready = false;
                 readiness.relay_ready = false;
@@ -368,7 +374,13 @@ pub(crate) async fn start_kernel_process_and_verify_with_config<R: tauri::Runtim
     process.start(None, config_path, tun_enabled).await
         .map_err(|e| e.to_string())?;
 
-    if let Err(e) = verify_kernel_startup_stability_with_config(api_port, stability).await {
+    if let Err(e) = verify_kernel_startup_stability_with_process_with_config(
+        process,
+        api_port,
+        stability,
+    )
+    .await
+    {
         if let Some(stderr_output) = process.read_stderr_output().await {
             let trimmed = stderr_output.trim();
             if !trimmed.is_empty() {
@@ -444,7 +456,13 @@ pub(crate) async fn start_kernel_with_state_with_process<R: Runtime>(
             readiness.relay_ready = false;
         });
 
-        if let Err(e) = verify_kernel_startup_stability(resolved.api_port).await {
+        if let Err(e) = verify_kernel_startup_stability_with_process_with_config(
+            process,
+            resolved.api_port,
+            StabilityCheckConfig::default(),
+        )
+        .await
+        {
             warn!("内核已运行，但 API 稳定性校验失败: {}", e);
             KERNEL_STATE.update_readiness(|readiness| {
                 readiness.api_ready = false;
@@ -548,7 +566,13 @@ pub(crate) async fn start_kernel_with_state_with_process<R: Runtime>(
         Ok(_) => {
             info!("? 内核进程启动成功，开始稳定性校验");
 
-            if let Err(e) = verify_kernel_startup_stability(resolved.api_port).await {
+            if let Err(e) = verify_kernel_startup_stability_with_process_with_config(
+                process,
+                resolved.api_port,
+                StabilityCheckConfig::default(),
+            )
+            .await
+            {
                 error!("? 内核稳定性校验失败: {}", e);
 
                 // 读取内核 stderr 输出辅助诊断

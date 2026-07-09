@@ -1,5 +1,13 @@
 # 更新日志
 
+## [v2.3.4] - 2026-07-09
+
+### 🐛 问题修复
+
+- **修复 v2.3.3 产物版本号错误** - 将 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 中的版本号从 `2.3.1` 同步到 `2.3.4`，确保安装包与 Release tag 版本一致
+- **修复 CI 中内核稳定性检查的注入接缝断裂** - `verify_kernel_startup_stability_with_config` 现在可通过 `process` 注入，避免测试中使用全局 `is_kernel_running()` 导致 flaky
+- **修复 e2e 测试中全局进程状态误判** - `l3_22_process_status_and_health_modules` 改为直接对启动的 `ProcessManager` 实例调用 `is_kernel_running_with_process`，不再依赖全局 controller 状态
+
 ## [v2.3.3] - 2026-07-09
 
 ### 🔧 优化改进
