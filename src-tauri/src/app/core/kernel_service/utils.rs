@@ -8,10 +8,54 @@ use crate::app::core::kernel_service::state::{
     KernelReadinessSnapshot, StartupDiagnosis, StartupDiagnosisKind, StartupStage, KERNEL_STATE,
 };
 use crate::app::storage::enhanced_storage_service::db_get_app_config;
+use serde::Serialize;
 use serde_json::json;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
+
+/// 内核事件发射抽象。生产使用 [`AppHandleSink`]，测试使用 [`VecSink`]。
+pub trait KernelEventSink: Send + Sync {
+    fn emit(&self, event: &str, payload: serde_json::Value);
+}
+
+/// 生产实现：通过 Tauri [`AppHandle`] 向前端发射事件（借用 AppHandle）。
+pub struct AppHandleSink<'a, R: tauri::Runtime>(pub &'a AppHandle<R>);
+
+impl<R: tauri::Runtime> KernelEventSink for AppHandleSink<'_, R> {
+    fn emit(&self, event: &str, payload: serde_json::Value) {
+        let _ = self.0.emit(event, payload);
+    }
+}
+
+/// 生产实现：通过 Tauri [`AppHandle`] 向前端发射事件（持有 AppHandle，可放进 Arc）。
+pub struct AppHandleOwnedSink<R: tauri::Runtime>(pub AppHandle<R>);
+
+impl<R: tauri::Runtime> KernelEventSink for AppHandleOwnedSink<R> {
+    fn emit(&self, event: &str, payload: serde_json::Value) {
+        let _ = self.0.emit(event, payload);
+    }
+}
+
+/// 测试实现：把事件记录到 Vec，便于断言。
+#[cfg(any(test, feature = "test-util"))]
+#[derive(Default)]
+pub struct VecSink {
+    pub events: Mutex<Vec<(String, serde_json::Value)>>,
+}
+
+#[cfg(any(test, feature = "test-util"))]
+impl KernelEventSink for VecSink {
+    fn emit(&self, event: &str, payload: serde_json::Value) {
+        self.events.lock().unwrap().push((event.to_string(), payload));
+    }
+}
+
+fn emit_value(sink: &dyn KernelEventSink, event: &str, payload: impl Serialize) {
+    let value = serde_json::to_value(payload).unwrap_or(serde_json::Value::Null);
+    sink.emit(event, value);
+}
 
 /// 解析配置文件路径
 ///
@@ -23,7 +67,9 @@ use tauri::{AppHandle, Emitter};
 /// # Returns
 /// * `Ok(PathBuf)` - 解析后的配置文件路径
 /// * `Err(String)` - 读取配置失败时的错误信息
-pub async fn resolve_config_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
+pub async fn resolve_config_path<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> Result<PathBuf, String> {
     let app_config = db_get_app_config(app_handle.clone())
         .await
         .map_err(|e| format!("获取应用配置失败: {}", e))?;
@@ -38,7 +84,9 @@ pub async fn resolve_config_path(app_handle: &AppHandle) -> Result<PathBuf, Stri
 ///
 /// 与 `resolve_config_path` 类似，但在读取失败时使用默认配置路径而非返回错误。
 /// 适用于守护进程等不能中断的场景。
-pub async fn resolve_config_path_or_default(app_handle: &AppHandle) -> PathBuf {
+pub async fn resolve_config_path_or_default<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> PathBuf {
     resolve_config_path(app_handle)
         .await
         .unwrap_or_else(|_| paths::get_config_dir().join("config.json"))
@@ -129,6 +177,11 @@ impl KernelStatusPayload {
     }
 }
 
+/// 发送内核状态变更事件（sink 版本）
+pub fn emit_kernel_status_with_sink(sink: &dyn KernelEventSink, status: &KernelStatusPayload) {
+    sink.emit("kernel-status-changed", status.to_json());
+}
+
 /// 发送内核状态变更事件
 ///
 /// 统一发送 `kernel-status-changed` 事件，确保所有状态变更通知格式一致。
@@ -136,8 +189,11 @@ impl KernelStatusPayload {
 /// # Arguments
 /// * `app_handle` - Tauri AppHandle 引用
 /// * `status` - 内核状态 payload
-pub fn emit_kernel_status(app_handle: &AppHandle, status: &KernelStatusPayload) {
-    let _ = app_handle.emit("kernel-status-changed", status.to_json());
+pub fn emit_kernel_status<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    status: &KernelStatusPayload,
+) {
+    emit_kernel_status_with_sink(&AppHandleSink(app_handle), status);
 }
 
 pub fn build_kernel_lifecycle_payload(
@@ -166,8 +222,8 @@ pub fn build_kernel_lifecycle_payload(
 /// * `api_port` - API 端口
 /// * `proxy_port` - 代理端口
 /// * `auto_restarted` - 是否为自动重启（守护进程触发）
-pub fn emit_kernel_started(
-    app_handle: &AppHandle,
+pub fn emit_kernel_started_with_sink(
+    sink: &dyn KernelEventSink,
     proxy_mode: &str,
     api_port: u16,
     proxy_port: u16,
@@ -186,30 +242,47 @@ pub fn emit_kernel_started(
     let started_payload =
         build_kernel_lifecycle_payload(proxy_mode, api_port, proxy_port, auto_restarted);
 
-    let _ = app_handle.emit("kernel-started", started_payload);
-    emit_kernel_status(app_handle, &status_payload);
-    let _ = app_handle.emit("kernel-ready", ());
+    emit_value(sink, "kernel-started", started_payload);
+    emit_kernel_status_with_sink(sink, &status_payload);
+    emit_value(sink, "kernel-ready", serde_json::Value::Null);
 }
 
-/// 发送内核已停止事件
-///
-/// 同时发送 `kernel-stopped` 和 `kernel-status-changed` 事件。
-pub fn emit_kernel_stopped(app_handle: &AppHandle) {
+pub fn emit_kernel_started<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    proxy_mode: &str,
+    api_port: u16,
+    proxy_port: u16,
+    auto_restarted: bool,
+) {
+    emit_kernel_started_with_sink(
+        &AppHandleSink(app_handle),
+        proxy_mode,
+        api_port,
+        proxy_port,
+        auto_restarted,
+    );
+}
+
+pub fn emit_kernel_stopped_with_sink(sink: &dyn KernelEventSink) {
     KERNEL_STATE.update_readiness(|readiness| {
         readiness.process_alive = false;
         readiness.api_ready = false;
         readiness.relay_ready = false;
     });
     let stopped_payload = KernelStatusPayload::from_state();
-    let _ = app_handle.emit("kernel-stopped", stopped_payload.to_json());
-    emit_kernel_status(app_handle, &stopped_payload);
+    emit_value(sink, "kernel-stopped", stopped_payload.to_json());
+    emit_kernel_status_with_sink(sink, &stopped_payload);
 }
 
-/// 发送内核启动中事件
+/// 发送内核已停止事件
 ///
-/// 发送 `kernel-starting` 事件，通知前端内核正在启动。
-pub fn emit_kernel_starting(
-    app_handle: &AppHandle,
+/// 同时发送 `kernel-stopped` 和 `kernel-status-changed` 事件。
+pub fn emit_kernel_stopped<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
+    emit_kernel_stopped_with_sink(&AppHandleSink(app_handle));
+}
+
+pub fn emit_kernel_starting_with_sink(
+    sink: &dyn KernelEventSink,
     proxy_mode: &str,
     api_port: u16,
     proxy_port: u16,
@@ -220,8 +293,20 @@ pub fn emit_kernel_starting(
         readiness.relay_ready = false;
     });
     let payload = build_kernel_lifecycle_payload(proxy_mode, api_port, proxy_port, false);
-    let _ = app_handle.emit("kernel-starting", payload);
-    emit_kernel_status(app_handle, &KernelStatusPayload::from_state());
+    emit_value(sink, "kernel-starting", payload);
+    emit_kernel_status_with_sink(sink, &KernelStatusPayload::from_state());
+}
+
+/// 发送内核启动中事件
+///
+/// 发送 `kernel-starting` 事件，通知前端内核正在启动。
+pub fn emit_kernel_starting<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    proxy_mode: &str,
+    api_port: u16,
+    proxy_port: u16,
+) {
+    emit_kernel_starting_with_sink(&AppHandleSink(app_handle), proxy_mode, api_port, proxy_port);
 }
 
 /// 发送内核错误事件
@@ -387,8 +472,8 @@ pub fn build_kernel_error_payload(
     })
 }
 
-pub fn emit_kernel_error_with_context(
-    app_handle: &AppHandle,
+pub fn emit_kernel_error_with_context_with_sink(
+    sink: &dyn KernelEventSink,
     code: &str,
     message: &str,
     details: Option<&str>,
@@ -401,11 +486,40 @@ pub fn emit_kernel_error_with_context(
     {
         KERNEL_STATE.record_startup_diagnosis(startup_diagnosis);
     }
-    let _ = app_handle.emit("kernel-error", payload);
-    emit_kernel_status(app_handle, &KernelStatusPayload::from_state());
+    emit_value(sink, "kernel-error", payload);
+    emit_kernel_status_with_sink(sink, &KernelStatusPayload::from_state());
 }
 
-pub fn emit_kernel_error(app_handle: &AppHandle, error: &str) {
+pub fn emit_kernel_error_with_context<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    code: &str,
+    message: &str,
+    details: Option<&str>,
+    source: Option<&str>,
+    recoverable: bool,
+) {
+    emit_kernel_error_with_context_with_sink(
+        &AppHandleSink(app_handle),
+        code,
+        message,
+        details,
+        source,
+        recoverable,
+    );
+}
+
+pub fn emit_kernel_error_with_sink(sink: &dyn KernelEventSink, error: &str) {
+    emit_kernel_error_with_context_with_sink(
+        sink,
+        "KERNEL_RUNTIME_ERROR",
+        error,
+        None,
+        None,
+        true,
+    );
+}
+
+pub fn emit_kernel_error<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, error: &str) {
     emit_kernel_error_with_context(app_handle, "KERNEL_RUNTIME_ERROR", error, None, None, true);
 }
 

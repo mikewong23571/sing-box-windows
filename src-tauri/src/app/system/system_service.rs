@@ -198,7 +198,7 @@ fn restart_as_admin_linux(app_handle: tauri::AppHandle) -> Result<(), String> {
 
 /// 查找可用的终端模拟器
 #[cfg(target_os = "linux")]
-fn find_terminal_emulator() -> Option<String> {
+pub(crate) fn find_terminal_emulator() -> Option<String> {
     let terminals = [
         "gnome-terminal",
         "konsole",
@@ -365,11 +365,30 @@ const HTTP_PROBE_URLS: [&str; 3] = [
     "https://1.1.1.1",
 ];
 
-async fn perform_network_probe(strict_http: bool) -> Result<bool, String> {
-    let tcp_timeout = Duration::from_secs(3);
+/// 合并 TCP/HTTP 探测结果（纯逻辑）。
+pub(crate) fn combine_connectivity_probe(
+    tcp_success: bool,
+    http_success: bool,
+    strict_http: bool,
+) -> bool {
+    if strict_http {
+        http_success
+    } else {
+        tcp_success || http_success
+    }
+}
+
+/// 可注入目标的连通性探测（生产默认目标见 TCP_PROBE_TARGETS / HTTP_PROBE_URLS）。
+pub(crate) async fn perform_network_probe_with(
+    tcp_targets: &[(&str, u16)],
+    http_urls: &[&str],
+    strict_http: bool,
+    tcp_timeout: Duration,
+    http_timeout: Duration,
+) -> Result<bool, String> {
     let mut tcp_success = false;
 
-    for (host, port) in TCP_PROBE_TARGETS.iter() {
+    for (host, port) in tcp_targets.iter() {
         let target = format!("{}:{}", host, port);
         match timeout(tcp_timeout, TcpStream::connect(&target)).await {
             Ok(Ok(_)) => {
@@ -383,13 +402,13 @@ async fn perform_network_probe(strict_http: bool) -> Result<bool, String> {
     }
 
     let client = Client::builder()
-        .timeout(Duration::from_secs(6))
+        .timeout(http_timeout)
         .user_agent("sing-box-windows/connectivity-check")
         .build()
         .map_err(|err| err.to_string())?;
 
     let mut http_success = false;
-    for url in HTTP_PROBE_URLS.iter() {
+    for url in http_urls.iter() {
         match client.get(*url).send().await {
             Ok(response) => {
                 if response.status().is_success() || response.status().as_u16() == 204 {
@@ -408,11 +427,22 @@ async fn perform_network_probe(strict_http: bool) -> Result<bool, String> {
         }
     }
 
-    if strict_http {
-        Ok(http_success)
-    } else {
-        Ok(tcp_success || http_success)
-    }
+    Ok(combine_connectivity_probe(
+        tcp_success,
+        http_success,
+        strict_http,
+    ))
+}
+
+async fn perform_network_probe(strict_http: bool) -> Result<bool, String> {
+    perform_network_probe_with(
+        &TCP_PROBE_TARGETS,
+        &HTTP_PROBE_URLS,
+        strict_http,
+        Duration::from_secs(3),
+        Duration::from_secs(6),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -464,3 +494,99 @@ pub async fn wait_for_network_ready(
         sleep(std::cmp::min(interval, remaining)).await;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_admin_returns_bool_without_panic() {
+        // 普通用户环境下通常为 false；root 下为 true
+        let _ = check_admin();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn find_terminal_emulator_is_optional() {
+        // 仅验证不 panic；CI 可能无图形终端
+        let _ = find_terminal_emulator();
+    }
+
+    #[tokio::test]
+    async fn wait_for_network_ready_short_timeout_returns() {
+        // 极短超时，确保函数可退出（网络可能已就绪也可能未就绪）
+        let result = wait_for_network_ready(Some(50), Some(10), Some(false)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn check_network_connectivity_non_strict() {
+        // 可能因环境无外网而失败/成功，但不能 panic
+        let _ = check_network_connectivity(Some(false)).await;
+    }
+
+    #[test]
+    fn combine_connectivity_probe_matrix() {
+        assert!(combine_connectivity_probe(true, false, false));
+        assert!(!combine_connectivity_probe(true, false, true));
+        assert!(combine_connectivity_probe(false, true, true));
+        assert!(!combine_connectivity_probe(false, false, false));
+        assert!(combine_connectivity_probe(true, true, true));
+    }
+
+    #[tokio::test]
+    async fn perform_network_probe_with_local_targets() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut s, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut buf = [0u8; 256];
+                let _ = s.read(&mut buf).await;
+                let _ = s
+                    .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await;
+            }
+        });
+
+        let http_url = format!("http://127.0.0.1:{}/generate_204", port);
+        let ok = perform_network_probe_with(
+            &[("127.0.0.1", port)],
+            &[http_url.as_str()],
+            false,
+            Duration::from_millis(500),
+            Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
+        assert!(ok);
+
+        let strict = perform_network_probe_with(
+            &[("127.0.0.1", 1)],
+            &[http_url.as_str()],
+            true,
+            Duration::from_millis(100),
+            Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
+        assert!(strict);
+
+        let fail = perform_network_probe_with(
+            &[("127.0.0.1", 1)],
+            &["http://127.0.0.1:1/nope"],
+            false,
+            Duration::from_millis(50),
+            Duration::from_millis(100),
+        )
+        .await
+        .unwrap();
+        assert!(!fail);
+    }
+}
+

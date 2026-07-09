@@ -174,6 +174,10 @@ pub async fn unzip_file(path: &str, to: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "file_util.tests.rs"]
+mod tests;
+
 // 从代理下载，失败后尝试直接下载
 pub async fn download_with_fallback<F>(
     original_url: &str,

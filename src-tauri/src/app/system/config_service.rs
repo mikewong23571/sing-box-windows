@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
 
-fn backup_corrupted_config(path: &Path) {
+pub(crate) fn backup_corrupted_config(path: &Path) {
     if !path.exists() {
         return;
     }
@@ -33,9 +33,8 @@ fn backup_corrupted_config(path: &Path) {
 use crate::app::storage::enhanced_storage_service::{
     db_get_app_config, db_save_app_config_internal,
 };
-use tauri::AppHandle;
 
-fn sanitize_file_name(raw: &str, default_name: &str) -> String {
+pub(crate) fn sanitize_file_name(raw: &str, default_name: &str) -> String {
     let mut sanitized: String = raw
         .chars()
         .map(|c| {
@@ -54,7 +53,7 @@ fn sanitize_file_name(raw: &str, default_name: &str) -> String {
     sanitized
 }
 
-fn normalize_active_config_local_path(raw_path: Option<&str>) -> (PathBuf, bool) {
+pub(crate) fn normalize_active_config_local_path(raw_path: Option<&str>) -> (PathBuf, bool) {
     let root = paths::get_config_dir();
     let default_path = root.join("config.json");
     let configs_dir = root.join("configs");
@@ -97,7 +96,7 @@ fn normalize_active_config_local_path(raw_path: Option<&str>) -> (PathBuf, bool)
     }
 }
 
-fn write_default_config(path: &Path, app_config: &AppConfig) -> Result<(), String> {
+pub(crate) fn write_default_config(path: &Path, app_config: &AppConfig) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {}", e))?;
@@ -114,7 +113,7 @@ fn write_default_config(path: &Path, app_config: &AppConfig) -> Result<(), Strin
 
 /// 尝试从同路径的 `.bak` 备份恢复配置（订阅配置写入时会维护该备份）。
 /// 返回 `Ok(true)` 表示已成功恢复并可继续使用该配置文件。
-fn try_restore_from_bak(path: &Path) -> Result<bool, String> {
+pub(crate) fn try_restore_from_bak(path: &Path) -> Result<bool, String> {
     let backup = path.with_extension("bak");
     if !backup.exists() {
         return Ok(false);
@@ -131,8 +130,8 @@ fn try_restore_from_bak(path: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
-async fn persist_active_config_path_if_missing(
-    app_handle: &AppHandle,
+async fn persist_active_config_path_if_missing<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     path: &Path,
 ) -> Result<(), String> {
     let mut app_config = db_get_app_config(app_handle.clone())
@@ -149,7 +148,9 @@ async fn persist_active_config_path_if_missing(
     Ok(())
 }
 
-pub async fn ensure_singbox_config(app_handle: &AppHandle) -> Result<(), String> {
+pub async fn ensure_singbox_config<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> Result<(), String> {
     // 从数据库获取配置路径
     let mut app_config = db_get_app_config(app_handle.clone())
         .await
@@ -222,14 +223,73 @@ pub async fn ensure_singbox_config(app_handle: &AppHandle) -> Result<(), String>
     }
 }
 
+/// 纯 JSON：写入 API/代理端口与 geoip/log 清理（无 FS）。
+pub(crate) fn patch_ports_into_config_json(
+    config: &mut Value,
+    proxy_port: u16,
+    api_port: u16,
+) -> Result<(), String> {
+    let config_obj = config
+        .as_object_mut()
+        .ok_or_else(|| "配置根节点不是对象".to_string())?;
+
+    sanitize_geoip_private_rule_sets(config_obj);
+    ensure_kernel_log_output(config_obj);
+
+    if let Some(experimental) = config_obj.get_mut("experimental") {
+        if let Some(exp_obj) = experimental.as_object_mut() {
+            let clash_api = exp_obj.entry("clash_api").or_insert(json!({}));
+            if let Some(clash_api_obj) = clash_api.as_object_mut() {
+                clash_api_obj.insert(
+                    "external_controller".to_string(),
+                    json!(format!("127.0.0.1:{}", api_port)),
+                );
+            }
+        }
+    } else {
+        config_obj.insert(
+            "experimental".to_string(),
+            json!({
+                "clash_api": {
+                    "external_controller": format!("127.0.0.1:{}", api_port),
+                    "external_ui": "metacubexd",
+                    "default_mode": "rule"
+                }
+            }),
+        );
+    }
+
+    if let Some(inbounds) = config_obj.get_mut("inbounds") {
+        if let Some(inbounds_array) = inbounds.as_array_mut() {
+            for inbound in inbounds_array {
+                if let Some(inbound_obj) = inbound.as_object_mut() {
+                    if inbound_obj.get("tag").and_then(|t| t.as_str()) == Some("mixed-in") {
+                        inbound_obj.insert("listen_port".to_string(), json!(proxy_port));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 端口合法性校验（纯逻辑）。
+pub(crate) fn validate_proxy_api_ports(proxy_port: u16, api_port: u16) -> Result<(), String> {
+    if proxy_port < 1024 || api_port < 1024 {
+        return Err("端口号必须在1024-65535之间".to_string());
+    }
+    if proxy_port == api_port {
+        return Err("代理端口和API端口不能相同".to_string());
+    }
+    Ok(())
+}
+
 // 更新sing-box配置文件中的端口设置
-// 更新sing-box配置文件中的端口设置
-async fn update_singbox_config_ports(
-    app_handle: &AppHandle,
+async fn update_singbox_config_ports<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     proxy_port: u16,
     api_port: u16,
 ) -> Result<(), Box<dyn Error>> {
-    // 从数据库获取配置路径
     let app_config = db_get_app_config(app_handle.clone())
         .await
         .map_err(|e| format!("获取应用配置失败: {}", e))?;
@@ -240,7 +300,6 @@ async fn update_singbox_config_ports(
         paths::get_config_dir().join("config.json")
     };
 
-    // 检查配置文件是否存在
     if !config_path.exists() {
         info!("sing-box配置文件不存在，跳过更新");
         return Ok(());
@@ -251,7 +310,6 @@ async fn update_singbox_config_ports(
         proxy_port, api_port
     );
 
-    // 读取现有的配置文件
     let config_content = match fs::read_to_string(&config_path) {
         Ok(content) => content,
         Err(e) => {
@@ -260,7 +318,6 @@ async fn update_singbox_config_ports(
         }
     };
 
-    // 解析为JSON
     let mut config: Value = match serde_json::from_str(&config_content) {
         Ok(json) => json,
         Err(e) => {
@@ -269,54 +326,9 @@ async fn update_singbox_config_ports(
         }
     };
 
-    // 修改API端口和代理端口
-    if let Some(config_obj) = config.as_object_mut() {
-        sanitize_geoip_private_rule_sets(config_obj);
-        ensure_kernel_log_output(config_obj);
+    patch_ports_into_config_json(&mut config, proxy_port, api_port)
+        .map_err(|e| -> Box<dyn Error> { e.into() })?;
 
-        // 修改experimental.clash_api配置（如果存在）
-        if let Some(experimental) = config_obj.get_mut("experimental") {
-            if let Some(exp_obj) = experimental.as_object_mut() {
-                // 添加或修改clash_api配置
-                let clash_api = exp_obj.entry("clash_api").or_insert(json!({}));
-
-                if let Some(clash_api_obj) = clash_api.as_object_mut() {
-                    // 设置external_controller为本地端口
-                    clash_api_obj.insert(
-                        "external_controller".to_string(),
-                        json!(format!("127.0.0.1:{}", api_port)),
-                    );
-                }
-            }
-        } else {
-            // 如果不存在experimental字段，添加它
-            config_obj.insert(
-                "experimental".to_string(),
-                json!({
-                    "clash_api": {
-                        "external_controller": format!("127.0.0.1:{}", api_port),
-                        "external_ui": "metacubexd",
-                        "default_mode": "rule"
-                    }
-                }),
-            );
-        }
-
-        // 修改入站端口（如果有inbounds）
-        if let Some(inbounds) = config_obj.get_mut("inbounds") {
-            if let Some(inbounds_array) = inbounds.as_array_mut() {
-                for inbound in inbounds_array {
-                    if let Some(inbound_obj) = inbound.as_object_mut() {
-                        if inbound_obj.get("tag").and_then(|t| t.as_str()) == Some("mixed-in") {
-                            inbound_obj.insert("listen_port".to_string(), json!(proxy_port));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 保存修改后的配置
     match fs::write(&config_path, serde_json::to_string_pretty(&config)?) {
         Ok(_) => {
             info!("已更新sing-box配置文件中的端口设置");
@@ -332,29 +344,19 @@ async fn update_singbox_config_ports(
 // 更新sing-box配置文件中的端口设置（供外部调用）
 // 更新sing-box配置文件中的端口设置（供外部调用）
 #[tauri::command]
-pub async fn update_singbox_ports(
-    app_handle: AppHandle,
+pub async fn update_singbox_ports<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
     proxy_port: u16,
     api_port: u16,
 ) -> Result<bool, String> {
-    // 验证端口范围
-    if proxy_port < 1024 || api_port < 1024 {
-        return Err("端口号必须在1024-65535之间".to_string());
-    }
-
-    // 验证端口不冲突
-    if proxy_port == api_port {
-        return Err("代理端口和API端口不能相同".to_string());
-    }
-
-    // 更新sing-box配置文件中的端口设置
+    validate_proxy_api_ports(proxy_port, api_port)?;
     match update_singbox_config_ports(&app_handle, proxy_port, api_port).await {
         Ok(_) => Ok(true),
         Err(e) => Err(format!("更新sing-box配置端口失败: {}", e)),
     }
 }
 
-fn sanitize_geoip_private_rule_sets(config_obj: &mut Map<String, Value>) {
+pub(crate) fn sanitize_geoip_private_rule_sets(config_obj: &mut Map<String, Value>) {
     if let Some(route_obj) = config_obj.get_mut("route").and_then(|v| v.as_object_mut()) {
         if let Some(rule_sets) = route_obj.get_mut("rule_set").and_then(|v| v.as_array_mut()) {
             rule_sets.retain(|rs| rs.get("tag").and_then(|v| v.as_str()) != Some(RS_GEOIP_PRIVATE));
@@ -397,7 +399,7 @@ fn sanitize_geoip_private_rule_sets(config_obj: &mut Map<String, Value>) {
     }
 }
 
-fn ensure_private_ip_rule(rules: &mut Vec<Value>) {
+pub(crate) fn ensure_private_ip_rule(rules: &mut Vec<Value>) {
     let has_private_rule = rules.iter().any(|rule| {
         rule.get("ip_cidr")
             .and_then(|v| v.as_array())

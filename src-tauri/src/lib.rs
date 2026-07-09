@@ -11,6 +11,13 @@ pub mod platform;
 pub mod process;
 pub mod utils;
 
+/// 测试/覆盖率基建（temp workspace 等）。生产启动不依赖。
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_support;
+
+#[cfg(test)]
+mod e2e_tests;
+
 #[derive(Debug, Clone, Copy)]
 struct StartupLaunchContext {
     should_start_hidden: bool,
@@ -324,3 +331,8 @@ fn show_window(app: &AppHandle) {
         }
     }
 }
+
+
+#[cfg(test)]
+mod wry_app_tests;
+

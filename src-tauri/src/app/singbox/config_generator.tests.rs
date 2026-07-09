@@ -296,3 +296,164 @@ fn generated_tun_inbound_should_use_explicit_route_exclude_address_override() {
         Some(&serde_json::json!(["203.0.113.0/24"]))
     );
 }
+
+// -------------------- 自定义规则 inject / strip 幂等 --------------------
+
+fn sample_custom_rule(
+    match_type: crate::app::storage::custom_rule::CustomRuleMatchType,
+    payload: &str,
+    action: crate::app::storage::custom_rule::CustomRuleAction,
+) -> crate::app::storage::custom_rule::CustomRule {
+    use chrono::Utc;
+    crate::app::storage::custom_rule::CustomRule {
+        id: format!("id-{}", payload),
+        enabled: true,
+        match_type,
+        payload: payload.to_string(),
+        action,
+        outbound: None,
+        note: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    }
+}
+
+fn route_rules(config: &Value) -> &[Value] {
+    config
+        .get("route")
+        .and_then(|r| r.get("rules"))
+        .and_then(|r| r.as_array())
+        .expect("route.rules 应存在")
+}
+
+#[test]
+fn inject_custom_rules_marks_each_rule_and_preserves_preamble() {
+    use crate::app::storage::custom_rule::{CustomRuleAction, CustomRuleMatchType};
+
+    let mut config = generate_base_config(&AppConfig::default());
+    let before_len = route_rules(&config).len();
+    assert!(before_len > 0, "默认配置应有系统 route.rules");
+
+    let rules = vec![
+        sample_custom_rule(
+            CustomRuleMatchType::DomainSuffix,
+            "example.com",
+            CustomRuleAction::Direct,
+        ),
+        sample_custom_rule(
+            CustomRuleMatchType::IpCidr,
+            "10.0.0.0/8",
+            CustomRuleAction::Block,
+        ),
+    ];
+    let injected = inject_custom_rules(&mut config, &rules, "手动选择");
+    assert_eq!(injected, 2);
+
+    let rules_arr = route_rules(&config);
+    assert_eq!(rules_arr.len(), before_len + 2);
+
+    // sniff 等系统规则仍在，且不应被打上自定义标记
+    assert!(
+        rules_arr
+            .iter()
+            .any(|r| r.get("action").and_then(|a| a.as_str()) == Some("sniff")),
+        "sniff 系统规则应保留"
+    );
+
+    let marked: Vec<_> = rules_arr
+        .iter()
+        .filter(|r| r.get(CUSTOM_RULE_MARKER).is_some())
+        .collect();
+    assert_eq!(marked.len(), 2, "每条自定义规则都应有 marker");
+    assert!(
+        marked.iter().all(|r| {
+            r.get("domain_suffix").is_some() || r.get("ip_cidr").is_some()
+        }),
+        "marker 只应出现在自定义规则上"
+    );
+}
+
+#[test]
+fn strip_custom_rules_removes_all_custom_and_keeps_system() {
+    use crate::app::storage::custom_rule::{CustomRuleAction, CustomRuleMatchType};
+
+    let mut config = generate_base_config(&AppConfig::default());
+    let baseline = route_rules(&config).to_vec();
+
+    let rules = vec![
+        sample_custom_rule(
+            CustomRuleMatchType::Domain,
+            "a.com",
+            CustomRuleAction::Proxy,
+        ),
+        sample_custom_rule(
+            CustomRuleMatchType::DomainSuffix,
+            "b.com",
+            CustomRuleAction::Direct,
+        ),
+        sample_custom_rule(
+            CustomRuleMatchType::IpCidr,
+            "192.168.0.0/16",
+            CustomRuleAction::Block,
+        ),
+    ];
+    inject_custom_rules(&mut config, &rules, "自动选择");
+    assert_eq!(route_rules(&config).len(), baseline.len() + 3);
+
+    strip_custom_rules(&mut config);
+    let after = route_rules(&config);
+    assert_eq!(after.len(), baseline.len(), "strip 后长度应回到基线");
+    assert!(
+        after.iter().all(|r| r.get(CUSTOM_RULE_MARKER).is_none()),
+        "strip 后不应残留 marker"
+    );
+    // 系统规则内容仍在
+    assert!(
+        after
+            .iter()
+            .any(|r| r.get("action").and_then(|a| a.as_str()) == Some("sniff")),
+        "strip 不得删除 sniff 等系统规则"
+    );
+}
+
+#[test]
+fn inject_strip_cycle_is_idempotent_for_multi_rules() {
+    use crate::app::storage::custom_rule::{CustomRuleAction, CustomRuleMatchType};
+
+    let mut config = generate_base_config(&AppConfig::default());
+    let baseline_len = route_rules(&config).len();
+    let rules = vec![
+        sample_custom_rule(
+            CustomRuleMatchType::DomainSuffix,
+            "openai.com",
+            CustomRuleAction::Proxy,
+        ),
+        sample_custom_rule(
+            CustomRuleMatchType::DomainKeyword,
+            "ads",
+            CustomRuleAction::Block,
+        ),
+    ];
+
+    // 连续三次 CRUD 风格 strip+inject，数量必须稳定
+    for _ in 0..3 {
+        strip_custom_rules(&mut config);
+        inject_custom_rules(&mut config, &rules, "手动选择");
+        assert_eq!(route_rules(&config).len(), baseline_len + 2);
+        assert_eq!(
+            route_rules(&config)
+                .iter()
+                .filter(|r| r.get(CUSTOM_RULE_MARKER).is_some())
+                .count(),
+            2
+        );
+    }
+
+    strip_custom_rules(&mut config);
+    inject_custom_rules(&mut config, &[], "手动选择");
+    assert_eq!(
+        route_rules(&config).len(),
+        baseline_len,
+        "全部删除后应回到基线"
+    );
+}

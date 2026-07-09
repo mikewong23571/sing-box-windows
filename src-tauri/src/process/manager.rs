@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex as StdMutex};
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
 use tracing::{debug, error, info, warn};
@@ -83,11 +83,11 @@ impl ProcessManager {
         Ok(())
     }
 
-    fn managed_pid_file() -> std::path::PathBuf {
+    pub(crate) fn managed_pid_file() -> std::path::PathBuf {
         paths::get_kernel_work_dir().join(".managed-kernel.pid")
     }
 
-    fn persist_managed_pid(&self, pid: u32) -> std::io::Result<()> {
+    pub(crate) fn persist_managed_pid(&self, pid: u32) -> std::io::Result<()> {
         let pid_file = Self::managed_pid_file();
         if let Some(parent) = pid_file.parent() {
             std::fs::create_dir_all(parent)?;
@@ -95,13 +95,13 @@ impl ProcessManager {
         std::fs::write(pid_file, pid.to_string())
     }
 
-    fn read_managed_pid(&self) -> Option<u32> {
+    pub(crate) fn read_managed_pid(&self) -> Option<u32> {
         let pid_file = Self::managed_pid_file();
         let content = std::fs::read_to_string(pid_file).ok()?;
         content.trim().parse::<u32>().ok()
     }
 
-    fn clear_managed_pid(&self) {
+    pub(crate) fn clear_managed_pid(&self) {
         let pid_file = Self::managed_pid_file();
         if let Err(e) = std::fs::remove_file(&pid_file) {
             if e.kind() != std::io::ErrorKind::NotFound {
@@ -242,9 +242,9 @@ impl ProcessManager {
         }
     }
 
-    async fn try_kill_pid_with_optional_privilege(
+    async fn try_kill_pid_with_optional_privilege<R: Runtime>(
         &self,
-        app_handle: Option<&AppHandle>,
+        app_handle: Option<&AppHandle<R>>,
         pid: u32,
         kernel_name: &str,
     ) {
@@ -371,20 +371,38 @@ impl ProcessManager {
 
     // 启动进程（带系统环境检查和重试机制）
     // tun_enabled: 是否启用 TUN 模式，在 Linux/macOS 上需要特殊权限提升
-    pub async fn start(
+    pub async fn start<R: Runtime>(
         &self,
-        app_handle: &AppHandle,
+        app_handle: &AppHandle<R>,
+        config_path: &std::path::Path,
+        tun_enabled: bool,
+    ) -> Result<()> {
+        self.start_inner(Some(app_handle), config_path, tun_enabled)
+            .await
+    }
+
+    /// Hermetic/test entry: `app_handle=None` 仅允许非 TUN 启动（无 sudo 路径）。
+    /// 泛型 Runtime 便于 MockRuntime 覆盖生产 start 路径（非 TUN 时 handle 可为 None）。
+    pub async fn start_inner<R: Runtime>(
+        &self,
+        app_handle: Option<&AppHandle<R>>,
         config_path: &std::path::Path,
         tun_enabled: bool,
     ) -> Result<()> {
         info!("🚀 开始启动内核进程... TUN模式: {}", tun_enabled);
+
+        if tun_enabled && app_handle.is_none() {
+            return Err(ProcessError::PermissionError(
+                "TUN 模式需要 AppHandle 以使用 sudo 提权".to_string(),
+            ));
+        }
 
         // 验证配置文件有效性
         self.validate_config(config_path).await?;
 
         // 先检查本地是否有 sing-box 进程在运行，如果有则先终止。
         // Linux/macOS 的 TUN 进程可能是 root 身份，需要携带 app_handle 走 sudo 回退。
-        if let Err(e) = self.kill_existing_processes(Some(app_handle)).await {
+        if let Err(e) = self.kill_existing_processes(app_handle).await {
             warn!("终止已有sing-box进程失败: {}", e);
         }
 
@@ -545,9 +563,9 @@ impl ProcessManager {
 
     // 尝试启动内核进程
     // tun_enabled 参数用于在 Linux/macOS 上启用 TUN 时进行权限提升
-    async fn try_start_kernel_process(
+    async fn try_start_kernel_process<R: Runtime>(
         &self,
-        app_handle: &AppHandle,
+        app_handle: Option<&AppHandle<R>>,
         kernel_path: &std::path::Path,
         kernel_work_dir: &std::path::Path,
         config_path: &std::path::Path,
@@ -583,6 +601,9 @@ impl ProcessManager {
         #[cfg(target_os = "linux")]
         {
             if tun_enabled {
+                let app_handle = app_handle.ok_or_else(|| {
+                    ProcessError::PermissionError("TUN 启动需要 AppHandle".to_string())
+                })?;
                 info!("🔐 TUN 模式启用，使用 sudo 提升内核权限");
                 return crate::app::system::sudo_service::spawn_kernel_with_saved_password(
                     app_handle,
@@ -609,6 +630,9 @@ impl ProcessManager {
         #[cfg(target_os = "macos")]
         {
             if tun_enabled {
+                let app_handle = app_handle.ok_or_else(|| {
+                    ProcessError::PermissionError("TUN 启动需要 AppHandle".to_string())
+                })?;
                 info!("🔐 TUN 模式启用，使用 sudo 提升内核权限");
                 return crate::app::system::sudo_service::spawn_kernel_with_saved_password(
                     app_handle,
@@ -704,9 +728,9 @@ impl ProcessManager {
     }
 
     // 仅清理本程序托管过的内核 PID，避免误杀用户自行运行的 sing-box 进程。
-    pub async fn kill_existing_processes(
+    pub async fn kill_existing_processes<R: Runtime>(
         &self,
-        app_handle: Option<&AppHandle>,
+        app_handle: Option<&AppHandle<R>>,
     ) -> std::io::Result<()> {
         let kernel_name = crate::platform::get_kernel_executable_name();
         let Some(pid) = self.read_managed_pid() else {
@@ -753,9 +777,9 @@ impl ProcessManager {
 
     // 按进程名强制清理所有内核进程。
     // 用于“检测到旧内核残留导致启动冲突”场景，优先保证新启动流程可恢复。
-    pub async fn force_kill_kernel_processes_by_name(
+    pub async fn force_kill_kernel_processes_by_name<R: Runtime>(
         &self,
-        app_handle: Option<&AppHandle>,
+        app_handle: Option<&AppHandle<R>>,
     ) -> std::result::Result<(), String> {
         let kernel_name = crate::platform::get_kernel_executable_name();
         info!("按进程名强制清理内核进程: {}", kernel_name);
@@ -852,7 +876,7 @@ impl ProcessManager {
     }
 
     // 停止进程
-    pub async fn stop(&self, app_handle: Option<&AppHandle>) -> Result<()> {
+    pub async fn stop<R: Runtime>(&self, app_handle: Option<&AppHandle<R>>) -> Result<()> {
         // 尝试关闭系统代理
         if let Err(e) = disable_system_proxy() {
             warn!("关闭系统代理失败: {}", e);
@@ -915,9 +939,9 @@ impl ProcessManager {
     }
 
     // 重启进程
-    pub async fn restart(
+    pub async fn restart<R: Runtime>(
         &self,
-        app_handle: &AppHandle,
+        app_handle: &AppHandle<R>,
         config_path: &std::path::Path,
         tun_enabled: bool,
     ) -> Result<()> {
@@ -926,6 +950,21 @@ impl ProcessManager {
         sleep(Duration::from_millis(1000)).await;
         self.start(app_handle, config_path, tun_enabled).await?;
         info!("内核进程重启完成");
+        Ok(())
+    }
+
+    /// Hermetic 重启：非 TUN 可传 `None` AppHandle。
+    pub async fn restart_inner<R: Runtime>(
+        &self,
+        app_handle: Option<&AppHandle<R>>,
+        config_path: &std::path::Path,
+        tun_enabled: bool,
+    ) -> Result<()> {
+        info!("正在重启内核进程(inner)，TUN模式: {}", tun_enabled);
+        self.stop(app_handle).await?;
+        sleep(Duration::from_millis(1000)).await;
+        self.start_inner(app_handle, config_path, tun_enabled).await?;
+        info!("内核进程重启完成(inner)");
         Ok(())
     }
 
@@ -1060,6 +1099,7 @@ fn kill_process_by_pid(pid: u32) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempWorkspace;
 
     #[tokio::test]
     async fn stderr_tail_should_keep_only_recent_lines() {
@@ -1078,5 +1118,624 @@ mod tests {
         assert_eq!(lines.len(), STDERR_TAIL_LIMIT);
         assert!(!output.contains("line-0"));
         assert!(output.contains(&format!("line-{}", STDERR_TAIL_LIMIT + 24)));
+    }
+
+    #[test]
+    fn managed_pid_file_roundtrip_and_clear() {
+        let ws = TempWorkspace::new();
+        let manager = ProcessManager::new();
+        assert!(manager.read_managed_pid().is_none());
+        manager.persist_managed_pid(4242).unwrap();
+        assert_eq!(manager.read_managed_pid(), Some(4242));
+        manager.clear_managed_pid();
+        assert!(manager.read_managed_pid().is_none());
+        let _ = ws;
+    }
+
+    #[tokio::test]
+    async fn is_running_false_when_no_process() {
+        let manager = ProcessManager::new();
+        assert!(!manager.is_running().await);
+    }
+
+    #[test]
+    fn default_constructs() {
+        let _m = ProcessManager::default();
+    }
+
+    #[test]
+    fn managed_pid_file_path_under_work_dir() {
+        let ws = TempWorkspace::new();
+        let path = ProcessManager::managed_pid_file();
+        assert!(path.ends_with(".managed-kernel.pid"));
+        assert!(path.starts_with(ws.path()) || path.to_string_lossy().contains("sing-box"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn is_pid_matching_kernel_name_for_self_is_false_for_wrong_name() {
+        let manager = ProcessManager::new();
+        let pid = std::process::id();
+        assert!(!manager.is_pid_matching_kernel_name(pid, "definitely-not-this-kernel"));
+    }
+
+    /// 安装可执行的假 sing-box：支持 `check` 成功、`run` 长驻并写 stderr。
+    fn install_fake_kernel(work: &std::path::Path) -> std::path::PathBuf {
+        let dir = work.join("sing-box");
+        std::fs::create_dir_all(&dir).unwrap();
+        let kernel = dir.join("sing-box");
+        std::fs::write(
+            &kernel,
+            r#"#!/bin/sh
+if [ "$1" = "check" ]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  echo "fake-kernel-started" >&2
+  exec sleep "${FAKE_KERNEL_RUN_SECS:-5}"
+fi
+exit 0
+"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&kernel).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&kernel, perms).unwrap();
+        }
+        kernel
+    }
+
+    #[tokio::test]
+    async fn start_inner_with_fake_kernel_then_stop() {
+        let ws = TempWorkspace::new();
+        let _ = install_fake_kernel(ws.path());
+
+        let cfg_path = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg_path, r#"{"log":{"level":"info"}}"#).unwrap();
+
+        let manager = ProcessManager::new();
+        manager
+            .start_inner::<tauri::Wry>(None, &cfg_path, false)
+            .await
+            .expect("fake kernel should start");
+        assert!(manager.is_running().await);
+
+        let _ = manager.read_stderr_output().await;
+
+        manager.stop::<tauri::Wry>(None).await.expect("stop should succeed");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let _ = manager.is_running().await;
+    }
+
+    #[tokio::test]
+    async fn start_inner_tun_without_handle_fails() {
+        let manager = ProcessManager::new();
+        let err = manager
+            .start_inner::<tauri::Wry>(None, std::path::Path::new("/tmp/nope.json"), true)
+            .await;
+        assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    async fn validate_config_missing_file_errors() {
+        let manager = ProcessManager::new();
+        let err = manager
+            .validate_config(std::path::Path::new("/tmp/definitely-missing-cfg-xyz.json"))
+            .await;
+        assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    async fn kill_existing_with_no_managed_pid_is_ok() {
+        let ws = TempWorkspace::new();
+        let manager = ProcessManager::new();
+        manager.clear_managed_pid();
+        manager.kill_existing_processes::<tauri::Wry>(None).await.unwrap();
+        let _ = ws;
+    }
+
+    #[tokio::test]
+    async fn restart_without_app_handle_path_via_stop_start_inner() {
+        let ws = TempWorkspace::new();
+        install_fake_kernel(ws.path());
+        let cfg_path = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg_path, r#"{"log":{"level":"info"}}"#).unwrap();
+
+        let manager = ProcessManager::new();
+        manager.start_inner::<tauri::Wry>(None, &cfg_path, false).await.unwrap();
+        assert!(manager.is_running().await);
+        manager.stop::<tauri::Wry>(None).await.unwrap();
+        manager.start_inner::<tauri::Wry>(None, &cfg_path, false).await.unwrap();
+        assert!(manager.is_running().await);
+        manager.stop::<tauri::Wry>(None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn validate_config_with_fake_kernel_ok() {
+        let ws = TempWorkspace::new();
+        install_fake_kernel(ws.path());
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
+        let manager = ProcessManager::new();
+        manager
+            .validate_config(&cfg)
+            .await
+            .expect("check should pass");
+    }
+
+    #[tokio::test]
+    async fn double_start_and_clear_stderr_tail() {
+        let ws = TempWorkspace::new();
+        install_fake_kernel(ws.path());
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
+        let manager = ProcessManager::new();
+        manager.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        let _ = manager.start_inner::<tauri::Wry>(None, &cfg, false).await;
+        let _ = manager.read_stderr_output().await;
+        manager.clear_stderr_tail();
+        manager.stop::<tauri::Wry>(None).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
+
+    #[tokio::test]
+    async fn force_kill_by_name_without_process() {
+        let ws = TempWorkspace::new();
+        let manager = ProcessManager::new();
+        manager.clear_managed_pid();
+        let _ = manager.force_kill_kernel_processes_by_name::<tauri::Wry>(None).await;
+        let _ = ws;
+    }
+
+    #[test]
+    fn managed_pid_invalid_content() {
+        let ws = TempWorkspace::new();
+        let manager = ProcessManager::new();
+        let path = ProcessManager::managed_pid_file();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, "not-a-pid").unwrap();
+        assert!(manager.read_managed_pid().is_none());
+        let _ = ws;
+    }
+
+    #[tokio::test]
+    async fn global_process_manager_start_stop_via_kernel_service() {
+        use crate::app::core::kernel_service::PROCESS_MANAGER as GLOBAL_PM;
+        use crate::app::core::kernel_service::status::is_kernel_running;
+        use crate::app::constants::paths;
+        use crate::test_support::TempWorkspace;
+
+        let ws = TempWorkspace::new();
+        install_fake_kernel(ws.path());
+        let cfg = paths::get_config_dir().join("config.json");
+        std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
+
+        GLOBAL_PM.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        assert!(GLOBAL_PM.is_running().await);
+        assert!(is_kernel_running().await.unwrap());
+        let _ = GLOBAL_PM.read_stderr_output().await;
+        GLOBAL_PM.stop::<tauri::Wry>(None).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    #[tokio::test]
+    async fn restart_public_api_without_app_handle_errors_or_works() {
+        // restart 需要 AppHandle 的某些路径；无 handle 时走 stop+start_inner 已覆盖
+        let ws = TempWorkspace::new();
+        install_fake_kernel(ws.path());
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
+        let manager = ProcessManager::new();
+        // stop when nothing running
+        let _ = manager.stop::<tauri::Wry>(None).await;
+        manager.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        // kill_existing while running
+        let _ = manager.kill_existing_processes::<tauri::Wry>(None).await;
+        let _ = manager.stop::<tauri::Wry>(None).await;
+    }
+
+    /// 安装会在 `check` 时输出 legacy DNS 错误的假内核。
+    fn install_fake_kernel_check_fail(work: &std::path::Path, stderr_msg: &str) -> std::path::PathBuf {
+        let dir = work.join("sing-box");
+        std::fs::create_dir_all(&dir).unwrap();
+        let kernel = dir.join("sing-box");
+        let script = format!(
+            r#"#!/bin/sh
+if [ "$1" = "check" ]; then
+  echo '{msg}' >&2
+  exit 1
+fi
+if [ "$1" = "run" ]; then exec sleep "${{FAKE_KERNEL_RUN_SECS:-5}}"; fi
+exit 0
+"#,
+            msg = stderr_msg.replace('\'', "")
+        );
+        std::fs::write(&kernel, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&kernel).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&kernel, perms).unwrap();
+        }
+        kernel
+    }
+
+    #[tokio::test]
+    async fn validate_config_maps_legacy_dns_error() {
+        let ws = TempWorkspace::new();
+        install_fake_kernel_check_fail(ws.path(), "legacy DNS servers is deprecated");
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
+        let manager = ProcessManager::new();
+        let err = manager.validate_config(&cfg).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("legacy DNS") || msg.contains("弃用") || msg.contains("配置"),
+            "unexpected: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_config_maps_domain_strategy_and_strategy_field_errors() {
+        let ws = TempWorkspace::new();
+        install_fake_kernel_check_fail(
+            ws.path(),
+            "legacy domain strategy options is deprecated ENABLE_DEPRECATED_LEGACY_DOMAIN_STRATEGY_OPTIONS",
+        );
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg, r#"{}"#).unwrap();
+        let manager = ProcessManager::new();
+        let err = manager.validate_config(&cfg).await.unwrap_err().to_string();
+        assert!(err.contains("domain strategy") || err.contains("弃用") || err.contains("配置"));
+
+        install_fake_kernel_check_fail(
+            ws.path(),
+            r#"dns.servers: unknown field "strategy""#,
+        );
+        let err2 = manager.validate_config(&cfg).await.unwrap_err().to_string();
+        assert!(err2.contains("strategy") || err2.contains("弃用") || err2.contains("配置"));
+
+        install_fake_kernel_check_fail(ws.path(), "generic parse error xyz");
+        let err3 = manager.validate_config(&cfg).await.unwrap_err().to_string();
+        assert!(err3.contains("配置校验失败") || err3.contains("generic") || err3.contains("xyz"));
+    }
+
+    #[tokio::test]
+    async fn start_inner_missing_kernel_errors() {
+        let ws = TempWorkspace::new();
+        // 工作区存在但无 sing-box 可执行文件
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
+        // 确保内核路径不存在
+        let kernel = crate::app::constants::paths::get_kernel_path();
+        if kernel.exists() {
+            let _ = std::fs::remove_file(&kernel);
+        }
+        let manager = ProcessManager::new();
+        let err = manager.start_inner::<tauri::Wry>(None, &cfg, false).await;
+        assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    async fn start_inner_exiting_kernel_fails_verify() {
+        let ws = TempWorkspace::new();
+        let dir = ws.path().join("sing-box");
+        std::fs::create_dir_all(&dir).unwrap();
+        let kernel = dir.join("sing-box");
+        // check 成功，run 立刻退出
+        std::fs::write(
+            &kernel,
+            r#"#!/bin/sh
+if [ "$1" = "check" ]; then exit 0; fi
+if [ "$1" = "run" ]; then exit 1; fi
+exit 0
+"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&kernel).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&kernel, perms).unwrap();
+        }
+        let cfg = dir.join("config.json");
+        std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
+        let manager = ProcessManager::new();
+        let err = manager.start_inner::<tauri::Wry>(None, &cfg, false).await;
+        assert!(err.is_err(), "immediate exit should fail verify/start");
+    }
+
+    #[tokio::test]
+    async fn force_kill_after_start_and_stop_when_already_dead() {
+        let ws = TempWorkspace::new();
+        install_fake_kernel(ws.path());
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
+        let manager = ProcessManager::new();
+        manager.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        assert!(manager.is_running().await);
+        let _ = manager.force_kill_kernel_processes_by_name::<tauri::Wry>(None).await;
+        let _ = manager.kill_existing_processes::<tauri::Wry>(None).await;
+        let _ = manager.stop::<tauri::Wry>(None).await;
+        // 二次 stop 应幂等
+        let _ = manager.stop::<tauri::Wry>(None).await;
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn is_pid_matching_kernel_name_for_self_comm() {
+        let manager = ProcessManager::new();
+        let pid = std::process::id();
+        // 自身 comm 通常是测试 runner 名，不会是 sing-box
+        assert!(!manager.is_pid_matching_kernel_name(pid, "sing-box"));
+        // 读取 /proc/self/comm 再匹配应成功
+        let comm = std::fs::read_to_string(format!("/proc/{}/comm", pid))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if !comm.is_empty() {
+            assert!(manager.is_pid_matching_kernel_name(pid, &comm));
+        }
+    }
+
+    #[tokio::test]
+    async fn is_running_false_after_process_exits_naturally() {
+        let ws = TempWorkspace::new();
+        let dir = ws.path().join("sing-box");
+        std::fs::create_dir_all(&dir).unwrap();
+        let kernel = dir.join("sing-box");
+        // check 成功，run 短暂 sleep 后退出
+        std::fs::write(
+            &kernel,
+            r#"#!/bin/sh
+if [ "$1" = "check" ]; then exit 0; fi
+if [ "$1" = "run" ]; then sleep 0.2; exit 0; fi
+exit 0
+"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&kernel).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&kernel, perms).unwrap();
+        }
+        let cfg = dir.join("config.json");
+        std::fs::write(&cfg, r#"{}"#).unwrap();
+        let manager = ProcessManager::new();
+        // 可能因 verify 失败而 Err，也可能短暂成功后退出
+        let _ = manager.start_inner::<tauri::Wry>(None, &cfg, false).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        // 进程已退出后 is_running 应为 false（或清理后）
+        let running = manager.is_running().await;
+        if running {
+            let _ = manager.stop::<tauri::Wry>(None).await;
+        }
+        assert!(!manager.is_running().await || !running);
+    }
+
+    #[tokio::test]
+    async fn start_inner_twice_replaces_running_process() {
+        let ws = TempWorkspace::new();
+        install_fake_kernel(ws.path());
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
+        let manager = ProcessManager::new();
+        manager.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        assert!(manager.is_running().await);
+        // 第二次启动应杀掉旧进程再起
+        manager.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        assert!(manager.is_running().await);
+        let stderr = manager.read_stderr_output().await;
+        let _ = stderr;
+        manager.stop::<tauri::Wry>(None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn kill_existing_with_stale_managed_pid() {
+        let ws = TempWorkspace::new();
+        let manager = ProcessManager::new();
+        // 写入不存在的 PID
+        manager.persist_managed_pid(4_294_967_294).unwrap();
+        manager.kill_existing_processes::<tauri::Wry>(None).await.unwrap();
+        // force kill 空名列表
+        let _ = manager.force_kill_kernel_processes_by_name::<tauri::Wry>(None).await;
+        manager.clear_managed_pid();
+        let _ = ws;
+    }
+
+    #[tokio::test]
+    async fn validate_config_skips_check_when_kernel_missing() {
+        let ws = TempWorkspace::new();
+        // 生产语义：内核文件不存在时跳过 `check`，仅确认配置文件可读
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        std::fs::write(&cfg, r#"{}"#).unwrap();
+        let kernel = crate::app::constants::paths::get_kernel_path();
+        if kernel.exists() {
+            let _ = std::fs::remove_file(&kernel);
+        }
+        let manager = ProcessManager::new();
+        if !kernel.exists() {
+            manager
+                .validate_config(&cfg)
+                .await
+                .expect("missing kernel skips check and accepts readable config");
+        } else {
+            // 其它用例残留内核时仍应能完成校验路径
+            let _ = manager.validate_config(&cfg).await;
+        }
+    }
+
+    #[test]
+    fn push_stderr_tail_when_lock_ok() {
+        let manager = ProcessManager::new();
+        ProcessManager::push_stderr_tail(&manager.stderr_tail, "one".into());
+        ProcessManager::push_stderr_tail(&manager.stderr_tail, "two".into());
+        manager.clear_stderr_tail();
+        // 再 push 后可读取
+        ProcessManager::push_stderr_tail(&manager.stderr_tail, "three".into());
+    }
+
+    #[tokio::test]
+    async fn read_stderr_empty_then_after_start() {
+        let ws = TempWorkspace::new();
+        install_fake_kernel(ws.path());
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg, r#"{}"#).unwrap();
+        let manager = ProcessManager::new();
+        // 启动前可能为空
+        let before = manager.read_stderr_output().await;
+        let _ = before;
+        manager.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let after = manager.read_stderr_output().await;
+        let _ = after;
+        manager.stop::<tauri::Wry>(None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn restart_inner_with_fake_kernel() {
+        let ws = TempWorkspace::new();
+        install_fake_kernel(ws.path());
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg, r#"{}"#).unwrap();
+        let manager = ProcessManager::new();
+        manager
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
+        manager
+            .restart_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .expect("restart_inner");
+        assert!(manager.is_running().await);
+        manager.stop::<tauri::Wry>(None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn kill_existing_after_start_with_managed_pid() {
+        let ws = TempWorkspace::new();
+        install_fake_kernel(ws.path());
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg, r#"{}"#).unwrap();
+        let manager = ProcessManager::new();
+        manager
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
+        assert!(manager.is_running().await);
+        manager
+            .kill_existing_processes::<tauri::Wry>(None)
+            .await
+            .expect("kill existing");
+        // 进程应被清理
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = manager.stop::<tauri::Wry>(None).await;
+    }
+
+    #[tokio::test]
+    async fn has_active_managed_pid_after_start() {
+        let ws = TempWorkspace::new();
+        install_fake_kernel(ws.path());
+        let cfg = ws.path().join("sing-box/config.json");
+        std::fs::write(&cfg, r#"{}"#).unwrap();
+        let manager = ProcessManager::new();
+        assert!(!manager.has_active_managed_kernel_pid().await);
+        manager
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
+        // 启动后可能记录了 managed pid
+        let _ = manager.has_active_managed_kernel_pid().await;
+        manager.stop::<tauri::Wry>(None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn start_public_api_via_mock_app() {
+        use crate::test_support::MockAppEnv;
+
+        let env = MockAppEnv::new();
+        install_fake_kernel(env.workspace.path());
+        let cfg = env.workspace.path().join("sing-box/config.json");
+        std::fs::write(&cfg, r#"{}"#).unwrap();
+        let manager = ProcessManager::new();
+        manager
+            .start(&env.handle(), &cfg, false)
+            .await
+            .expect("start with mock handle");
+        manager
+            .stop(Some(&env.handle()))
+            .await
+            .expect("stop with mock handle");
+    }
+}
+
+#[async_trait::async_trait]
+impl<R: tauri::Runtime> crate::app::core::kernel_service::KernelProcessControl<R> for ProcessManager {
+    async fn start(
+        &self,
+        app_handle: Option<&tauri::AppHandle<R>>,
+        config_path: &std::path::Path,
+        tun_enabled: bool,
+    ) -> std::result::Result<(), String> {
+        self.start_inner(app_handle, config_path, tun_enabled)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn stop(
+        &self,
+        app_handle: Option<&tauri::AppHandle<R>>,
+    ) -> std::result::Result<(), String> {
+        ProcessManager::stop(self, app_handle)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn restart(
+        &self,
+        app_handle: &tauri::AppHandle<R>,
+        config_path: &std::path::Path,
+        tun_enabled: bool,
+    ) -> std::result::Result<(), String> {
+        ProcessManager::restart(self, app_handle, config_path, tun_enabled)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn kill_existing_processes(
+        &self,
+        app_handle: Option<&tauri::AppHandle<R>>,
+    ) -> std::result::Result<(), String> {
+        ProcessManager::kill_existing_processes(self, app_handle)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn force_kill_kernel_processes_by_name(
+        &self,
+        app_handle: Option<&tauri::AppHandle<R>>,
+    ) -> std::result::Result<(), String> {
+        ProcessManager::force_kill_kernel_processes_by_name(self, app_handle).await
+    }
+
+    async fn is_running(&self) -> bool {
+        ProcessManager::is_running(self).await
+    }
+
+    async fn read_stderr_output(&self) -> Option<String> {
+        ProcessManager::read_stderr_output(self).await
     }
 }

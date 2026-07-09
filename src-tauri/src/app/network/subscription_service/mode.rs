@@ -7,10 +7,13 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 use tracing::{error, info, warn};
 
-pub async fn toggle_proxy_mode_impl(app_handle: AppHandle, mode: String) -> Result<String, String> {
+pub async fn toggle_proxy_mode_impl<R: Runtime>(
+    app_handle: AppHandle<R>,
+    mode: String,
+) -> Result<String, String> {
     let mode = normalize_proxy_mode(&mode)
         .ok_or_else(|| format!("无效的代理模式: {}", mode))?
         .to_string();
@@ -52,7 +55,9 @@ pub async fn toggle_proxy_mode_impl(app_handle: AppHandle, mode: String) -> Resu
     }
 }
 
-pub async fn get_current_proxy_mode_impl(app_handle: AppHandle) -> Result<String, String> {
+pub async fn get_current_proxy_mode_impl<R: Runtime>(
+    app_handle: AppHandle<R>,
+) -> Result<String, String> {
     info!("正在获取当前代理模式");
 
     let app_config = db_get_app_config(app_handle)
@@ -158,7 +163,7 @@ pub fn modify_default_mode(
     Ok(())
 }
 
-fn read_proxy_mode_from_config(config_path: &Path) -> Result<String, Box<dyn Error>> {
+pub(crate) fn read_proxy_mode_from_config(config_path: &Path) -> Result<String, Box<dyn Error>> {
     let mut file = File::open(config_path)?;
     let mut content = String::new();
     file.read_to_string(&mut content)?;
@@ -178,7 +183,7 @@ fn read_proxy_mode_from_config(config_path: &Path) -> Result<String, Box<dyn Err
     Ok("rule".to_string())
 }
 
-fn normalize_proxy_mode(mode: &str) -> Option<&'static str> {
+pub(crate) fn normalize_proxy_mode(mode: &str) -> Option<&'static str> {
     match mode.trim().to_ascii_lowercase().as_str() {
         "global" => Some("global"),
         "rule" => Some("rule"),
@@ -186,7 +191,7 @@ fn normalize_proxy_mode(mode: &str) -> Option<&'static str> {
     }
 }
 
-fn clash_api_mode_alias(mode: &str) -> Option<&'static str> {
+pub(crate) fn clash_api_mode_alias(mode: &str) -> Option<&'static str> {
     match normalize_proxy_mode(mode)? {
         "global" => Some("Global"),
         "rule" => Some("Rule"),
@@ -194,7 +199,7 @@ fn clash_api_mode_alias(mode: &str) -> Option<&'static str> {
     }
 }
 
-fn resolve_proxy_mode_config_path(active_config_path: Option<&str>) -> PathBuf {
+pub(crate) fn resolve_proxy_mode_config_path(active_config_path: Option<&str>) -> PathBuf {
     active_config_path
         .map(PathBuf::from)
         .unwrap_or_else(|| paths::get_config_dir().join("config.json"))
@@ -217,7 +222,7 @@ fn collect_proxy_mode_config_paths(
     paths
 }
 
-fn read_api_port_from_config(config_path: &Path) -> Result<Option<u16>, Box<dyn Error>> {
+pub(crate) fn read_api_port_from_config(config_path: &Path) -> Result<Option<u16>, Box<dyn Error>> {
     if !config_path.exists() {
         return Ok(None);
     }

@@ -52,7 +52,7 @@ enum PackageKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LinuxPackagePreference {
+pub(crate) enum LinuxPackagePreference {
     Deb,
     Rpm,
     AppImage,
@@ -216,6 +216,7 @@ fn get_platform_priority_for(
     base_priority + arch_bonus + special_bonus
 }
 
+#[allow(dead_code)]
 fn get_platform_priority(filename: &str) -> i32 {
     get_platform_priority_for(
         filename,
@@ -267,28 +268,9 @@ fn command_exists_on_path(command: &str) -> bool {
 }
 
 // 检查文件是否匹配当前平台
+#[allow(dead_code)]
 fn is_platform_compatible(filename: &str) -> bool {
-    let platform = get_platform_identifier();
-    let arch = get_current_arch();
-    let package_kind = get_package_kind(filename);
-
-    // 只支持桌面平台
-    let extension_match = match platform {
-        "windows" => matches!(package_kind, PackageKind::Msi | PackageKind::Exe),
-        "linux" => matches!(
-            package_kind,
-            PackageKind::AppImage | PackageKind::Deb | PackageKind::Rpm
-        ),
-        "macos" => matches!(package_kind, PackageKind::Dmg | PackageKind::AppTarGz),
-        _ => false,
-    };
-
-    if !extension_match {
-        return false;
-    }
-
-    // 检查架构兼容性
-    check_arch_compatibility(filename, arch)
+    is_platform_compatible_for(filename, get_platform_identifier(), get_current_arch())
 }
 
 // 检查架构兼容性（仅桌面平台）
@@ -341,7 +323,7 @@ pub struct UpdateInfo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UpdateChannel {
+pub(crate) enum UpdateChannel {
     Stable,
     Prerelease,
     Autobuild,
@@ -426,128 +408,94 @@ fn compare_versions(current: &str, latest: &str) -> bool {
     }
 }
 
-// 检查更新
-#[tauri::command]
-pub async fn check_update(
-    current_version: String,
-    include_prerelease: Option<bool>,
-    update_channel: Option<String>,
-) -> Result<UpdateInfo, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(
-            network_config::HTTP_TIMEOUT_SECONDS,
-        ))
-        .no_proxy() // 禁用代理
-        .build()
-        .map_err(|e| format!("{}: {}", messages::ERR_HTTP_CLIENT_FAILED, e))?;
+/// 从 assets 中按平台/架构/发行版偏好挑选最优下载资源（纯逻辑）。
+pub(crate) fn pick_best_download_asset(
+    assets: &[serde_json::Value],
+    platform: &str,
+    arch: &str,
+    linux_preference: LinuxPackagePreference,
+) -> (String, Option<u64>, i32) {
+    let mut download_url = String::new();
+    let mut file_size: Option<u64> = None;
+    let mut best_priority = 0;
 
-    let include_prerelease = include_prerelease.unwrap_or(false);
-    let channel = UpdateChannel::from_inputs(update_channel.as_deref(), include_prerelease);
-
-    // 稳定通道读取 latest，其他通道读取 releases 列表后由本地策略筛选。
-    let api_url = if channel.uses_release_list() {
-        "https://api.github.com/repos/xinggaoya/sing-box-windows/releases"
-    } else {
-        api::GITHUB_API_URL
-    };
-
-    // 获取版本信息
-    let response = client
-        .get(api_url)
-        .header("User-Agent", api::USER_AGENT)
-        .send()
-        .await
-        .map_err(|e| format!("{}: {}", messages::ERR_GET_VERSION_FAILED, e))?;
-
-    let release: serde_json::Value = if channel.uses_release_list() {
-        let releases: Vec<serde_json::Value> = response
-            .json()
-            .await
-            .map_err(|e| format!("{}: {}", messages::ERR_GET_VERSION_FAILED, e))?;
-
-        if releases.is_empty() {
-            return Err(format!(
-                "{}: 无法获取版本列表",
-                messages::ERR_GET_VERSION_FAILED
-            ));
+    for asset in assets {
+        let name = asset["name"].as_str().unwrap_or("");
+        if !is_platform_compatible_for(name, platform, arch) {
+            continue;
         }
+        let priority = get_platform_priority_for(name, platform, arch, linux_preference);
+        if priority > best_priority {
+            download_url = asset["browser_download_url"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            file_size = asset["size"].as_u64();
+            best_priority = priority;
+            // 最高优先级约为 27（基础 20 + 架构 5 + 特殊 2）
+            if priority >= 25 {
+                break;
+            }
+        }
+    }
 
-        select_release_by_channel(&releases, channel)
-            .ok_or_else(|| format!("{}: 未找到匹配通道的版本", messages::ERR_GET_VERSION_FAILED))?
-    } else {
-        response
-            .json()
-            .await
-            .map_err(|e| format!("{}: {}", messages::ERR_GET_VERSION_FAILED, e))?
+    (download_url, file_size, best_priority)
+}
+
+fn is_platform_compatible_for(filename: &str, platform: &str, arch: &str) -> bool {
+    let package_kind = get_package_kind(filename);
+    let extension_match = match platform {
+        "windows" => matches!(package_kind, PackageKind::Msi | PackageKind::Exe),
+        "linux" => matches!(
+            package_kind,
+            PackageKind::AppImage | PackageKind::Deb | PackageKind::Rpm
+        ),
+        "macos" => matches!(package_kind, PackageKind::Dmg | PackageKind::AppTarGz),
+        _ => false,
     };
+    if !extension_match {
+        return false;
+    }
+    check_arch_compatibility(filename, arch)
+}
 
-    // 获取最新版本号
+/// 从已解析的 release JSON 构造 UpdateInfo（纯逻辑，无网络）。
+pub(crate) fn build_update_info_from_release(
+    release: &serde_json::Value,
+    current_version: &str,
+    platform: &str,
+    arch: &str,
+    linux_preference: LinuxPackagePreference,
+    supports_in_app: bool,
+) -> Result<UpdateInfo, String> {
     let tag_name = release["tag_name"]
         .as_str()
         .ok_or_else(|| format!("{}: 无法解析版本号", messages::ERR_GET_VERSION_FAILED))
         .map(|v| v.trim_start_matches('v').to_string())?;
 
-    // 获取发布说明
     let release_notes = release["body"].as_str().map(|s| s.to_string());
-
-    // 为非 Windows 平台保留发布页链接，避免继续走无效的应用内安装流程。
-    let release_page_url = resolve_release_page_url(&release);
-
-    // 获取发布日期
+    let release_page_url = resolve_release_page_url(release);
     let release_date = release["published_at"].as_str().map(|s| s.to_string());
-
-    // 检查是否为预发布版本
     let is_prerelease = release["prerelease"].as_bool().unwrap_or(false);
 
-    // 获取下载链接和文件大小
     let assets = release["assets"]
         .as_array()
         .ok_or_else(|| format!("{}: 无法获取下载资源", messages::ERR_GET_VERSION_FAILED))?;
 
-    // 根据当前平台查找对应的安装程序
-    let mut download_url = String::new();
-    let mut file_size: Option<u64> = None;
-    let mut best_priority = 0;
-    let supports_in_app_update = supports_in_app_update();
+    let (download_url, file_size, _) =
+        pick_best_download_asset(assets, platform, arch, linux_preference);
 
-    // 遍历所有资源，找到最适合当前平台的安装包
-    for asset in assets {
-        let name = asset["name"].as_str().unwrap_or("");
-
-        // 检查文件是否与当前平台兼容
-        if is_platform_compatible(name) {
-            let priority = get_platform_priority(name);
-
-            // 选择优先级最高的安装包
-            if priority > best_priority {
-                download_url = asset["browser_download_url"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
-                file_size = asset["size"].as_u64();
-                best_priority = priority;
-
-                // 最高优先级约为 27（基础 20 + 架构 5 + 特殊 2），
-                // 达到 25 以上即可认为“当前平台最佳候选”，提前结束遍历。
-                if priority >= 25 {
-                    break;
-                }
-            }
-        }
-    }
-
-    if supports_in_app_update && download_url.is_empty() {
+    if supports_in_app && download_url.is_empty() {
         return Err(format!(
             "{}: 无法获取下载链接",
             messages::ERR_GET_VERSION_FAILED
         ));
     }
 
-    // 使用改进的版本比较
-    let has_update = compare_versions(&current_version, &tag_name);
+    let has_update = compare_versions(current_version, &tag_name);
 
     Ok(UpdateInfo {
-        latest_version: tag_name.to_string(),
+        latest_version: tag_name,
         download_url,
         release_page_url,
         has_update,
@@ -555,8 +503,189 @@ pub async fn check_update(
         release_date,
         file_size,
         is_prerelease,
-        supports_in_app_update,
+        supports_in_app_update: supports_in_app,
     })
+}
+
+/// 稳定通道用 latest API，其它通道用 releases 列表（纯逻辑）。
+pub(crate) fn default_check_update_api_url(uses_release_list: bool) -> &'static str {
+    if uses_release_list {
+        "https://api.github.com/repos/xinggaoya/sing-box-windows/releases"
+    } else {
+        api::GITHUB_API_URL
+    }
+}
+
+/// 从 releases 列表按通道挑选一条 release（纯逻辑）。
+pub(crate) fn select_release_json_for_channel(
+    releases: &[serde_json::Value],
+    channel: UpdateChannel,
+) -> Result<serde_json::Value, String> {
+    if releases.is_empty() {
+        return Err(format!(
+            "{}: 无法获取版本列表",
+            messages::ERR_GET_VERSION_FAILED
+        ));
+    }
+    select_release_by_channel(releases, channel)
+        .ok_or_else(|| format!("{}: 未找到匹配通道的版本", messages::ERR_GET_VERSION_FAILED))
+}
+
+/// 从任意 API URL 拉取并构造 UpdateInfo（可注入本地 mock，生产 URL 不变）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn check_update_from_api_url(
+    api_url: &str,
+    uses_release_list: bool,
+    current_version: &str,
+    platform: &str,
+    arch: &str,
+    linux_preference: LinuxPackagePreference,
+    supports_in_app: bool,
+    channel: UpdateChannel,
+) -> Result<UpdateInfo, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(
+            network_config::HTTP_TIMEOUT_SECONDS,
+        ))
+        .no_proxy()
+        .build()
+        .map_err(|e| format!("{}: {}", messages::ERR_HTTP_CLIENT_FAILED, e))?;
+
+    let response = client
+        .get(api_url)
+        .header("User-Agent", api::USER_AGENT)
+        .send()
+        .await
+        .map_err(|e| format!("{}: {}", messages::ERR_GET_VERSION_FAILED, e))?;
+
+    let release: serde_json::Value = if uses_release_list {
+        let releases: Vec<serde_json::Value> = response
+            .json()
+            .await
+            .map_err(|e| format!("{}: {}", messages::ERR_GET_VERSION_FAILED, e))?;
+        select_release_json_for_channel(&releases, channel)?
+    } else {
+        response
+            .json()
+            .await
+            .map_err(|e| format!("{}: {}", messages::ERR_GET_VERSION_FAILED, e))?
+    };
+
+    build_update_info_from_release(
+        &release,
+        current_version,
+        platform,
+        arch,
+        linux_preference,
+        supports_in_app,
+    )
+}
+
+/// 应用内更新不支持时的错误文案（纯逻辑）。
+pub(crate) fn in_app_update_unsupported_message() -> &'static str {
+    "当前平台暂不支持应用内更新，请前往版本页面下载最新版本"
+}
+
+/// 下载文件缺失时的错误文案（纯逻辑）。
+pub(crate) fn downloaded_update_missing_message() -> &'static str {
+    "下载的文件不存在"
+}
+
+/// 根据工作目录与下载 URL 解析本地保存路径（纯逻辑）。
+pub(crate) fn resolve_update_download_path(
+    work_dir: &Path,
+    download_url: &str,
+    platform: &str,
+) -> std::path::PathBuf {
+    work_dir.join(resolve_update_filename(download_url, platform))
+}
+
+/// 构造 update-progress 事件负载（纯逻辑）。
+pub(crate) fn build_update_progress_payload(
+    status: &str,
+    progress: u64,
+    message: impl Into<String>,
+) -> serde_json::Value {
+    json!({
+        "status": status,
+        "progress": progress,
+        "message": message.into()
+    })
+}
+
+/// RPM 安装前置检查：系统是否具备 rpm 命令（可注入探测结果）。
+pub(crate) fn rpm_install_precheck(rpm_command_exists: bool) -> Result<(), String> {
+    if rpm_command_exists {
+        Ok(())
+    } else {
+        Err("当前系统缺少 rpm 命令，无法安装 RPM 包".to_string())
+    }
+}
+
+/// 应用内更新支持性前置检查（纯逻辑，可注入）。
+pub(crate) fn ensure_in_app_update_supported(supports: bool) -> Result<(), String> {
+    if supports {
+        Ok(())
+    } else {
+        Err(in_app_update_unsupported_message().to_string())
+    }
+}
+
+/// 校验已下载更新文件存在（纯逻辑）。
+pub(crate) fn validate_downloaded_update_file(path: &Path) -> Result<(), String> {
+    if path.exists() {
+        Ok(())
+    } else {
+        Err(downloaded_update_missing_message().to_string())
+    }
+}
+
+/// 无窗口下载更新包到 work_dir（hermetic：可注入 URL/平台）。
+#[allow(dead_code)]
+pub(crate) async fn download_update_package_to_work_dir(
+    download_url: &str,
+    work_dir: &Path,
+    platform: &str,
+    supports_in_app: bool,
+) -> Result<std::path::PathBuf, String> {
+    ensure_in_app_update_supported(supports_in_app)?;
+    let download_path = resolve_update_download_path(work_dir, download_url, platform);
+    crate::utils::file_util::download_with_fallback(
+        download_url,
+        download_path
+            .to_str()
+            .ok_or_else(|| "下载路径无效".to_string())?,
+        |_progress| {},
+    )
+    .await
+    .map_err(|e| format!("下载更新失败: {}", e))?;
+    validate_downloaded_update_file(&download_path)?;
+    Ok(download_path)
+}
+
+// 检查更新
+#[tauri::command]
+pub async fn check_update(
+    current_version: String,
+    include_prerelease: Option<bool>,
+    update_channel: Option<String>,
+) -> Result<UpdateInfo, String> {
+    let include_prerelease = include_prerelease.unwrap_or(false);
+    let channel = UpdateChannel::from_inputs(update_channel.as_deref(), include_prerelease);
+    let uses_list = channel.uses_release_list();
+    let api_url = default_check_update_api_url(uses_list);
+
+    check_update_from_api_url(
+        api_url,
+        uses_list,
+        &current_version,
+        get_platform_identifier(),
+        get_current_arch(),
+        detect_linux_package_preference(),
+        supports_in_app_update(),
+        channel,
+    )
+    .await
 }
 
 // 下载更新
@@ -628,6 +757,45 @@ impl PlatformDetailedInfo {
     }
 }
 
+/// 描述安装动作（纯逻辑，不真正 spawn）。
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InstallAction {
+    Msiexec,
+    RunExe,
+    ChmodAndRun,
+    PkexecDpkg,
+    PkexecRpm,
+    OpenDmg,
+    TarExtract,
+    RunBinary,
+    Unsupported(&'static str),
+}
+
+/// 根据平台与下载 URL 选择安装动作。
+#[allow(dead_code)]
+pub(crate) fn plan_install_action(platform: &str, download_url: &str) -> InstallAction {
+    match platform {
+        "windows" => match get_package_kind(download_url) {
+            PackageKind::Msi => InstallAction::Msiexec,
+            PackageKind::Exe => InstallAction::RunExe,
+            _ => InstallAction::RunBinary,
+        },
+        "linux" => match get_package_kind(download_url) {
+            PackageKind::AppImage => InstallAction::ChmodAndRun,
+            PackageKind::Deb => InstallAction::PkexecDpkg,
+            PackageKind::Rpm => InstallAction::PkexecRpm,
+            _ => InstallAction::RunBinary,
+        },
+        "macos" => match get_package_kind(download_url) {
+            PackageKind::Dmg => InstallAction::OpenDmg,
+            PackageKind::AppTarGz => InstallAction::TarExtract,
+            _ => InstallAction::RunBinary,
+        },
+        _ => InstallAction::Unsupported("当前平台暂不支持应用内更新"),
+    }
+}
+
 // 下载并安装更新
 #[tauri::command]
 pub async fn download_and_install_update(
@@ -638,35 +806,24 @@ pub async fn download_and_install_update(
         .get_webview_window("main")
         .ok_or("无法获取主窗口")?;
 
-    if !supports_in_app_update() {
-        let error_msg = "当前平台暂不支持应用内更新，请前往版本页面下载最新版本";
+    if let Err(error_msg) = ensure_in_app_update_supported(supports_in_app_update()) {
         let _ = window.emit(
             "update-progress",
-            json!({
-                "status": "error",
-                "progress": 0,
-                "message": error_msg
-            }),
+            build_update_progress_payload("error", 0, error_msg.clone()),
         );
-        return Err(error_msg.to_string());
+        return Err(error_msg);
     }
 
     let work_dir = get_work_dir_sync();
 
     // 根据下载链接和平台确定下载文件名
     let platform = get_platform_identifier();
-    let update_filename = resolve_update_filename(&download_url, platform);
-
-    let download_path = Path::new(&work_dir).join(update_filename);
+    let download_path = resolve_update_download_path(Path::new(&work_dir), &download_url, platform);
 
     // 发送开始下载事件
     let _ = window.emit(
         "update-progress",
-        json!({
-            "status": "downloading",
-            "progress": 0,
-            "message": "开始下载更新..."
-        }),
+        build_update_progress_payload("downloading", 0, "开始下载更新..."),
     );
 
     // 下载更新文件
@@ -690,37 +847,24 @@ pub async fn download_and_install_update(
     {
         let _ = window.emit(
             "update-progress",
-            json!({
-                "status": "error",
-                "progress": 0,
-                "message": format!("下载失败: {}", e)
-            }),
+            build_update_progress_payload("error", 0, format!("下载失败: {}", e)),
         );
         return Err(format!("下载更新失败: {}", e));
     }
 
     // 验证下载的文件
-    if !download_path.exists() {
-        let error_msg = "下载的文件不存在";
+    if let Err(error_msg) = validate_downloaded_update_file(&download_path) {
         let _ = window.emit(
             "update-progress",
-            json!({
-                "status": "error",
-                "progress": 0,
-                "message": error_msg
-            }),
+            build_update_progress_payload("error", 0, error_msg.clone()),
         );
-        return Err(error_msg.to_string());
+        return Err(error_msg);
     }
 
     // 发送下载完成事件
     let _ = window.emit(
         "update-progress",
-        json!({
-            "status": "completed",
-            "progress": 100,
-            "message": "下载完成，准备安装..."
-        }),
+        build_update_progress_payload("completed", 100, "下载完成，准备安装..."),
     );
 
     // 启动安装程序（在后台运行）
@@ -784,8 +928,8 @@ pub async fn download_and_install_update(
                         .map_err(|e| format!("启动安装程序失败: {}", e))
                 }
                 PackageKind::Rpm => {
-                    if !command_exists_on_path("rpm") {
-                        Err("当前系统缺少 rpm 命令，无法安装 RPM 包".to_string())
+                    if let Err(e) = rpm_install_precheck(command_exists_on_path("rpm")) {
+                        Err(e)
                     } else {
                         let mut cmd = tokio::process::Command::new("pkexec");
                         cmd.arg("rpm").arg("-Uvh").arg(&download_path);
@@ -842,22 +986,14 @@ pub async fn download_and_install_update(
 
             let _ = window.emit(
                 "update-progress",
-                json!({
-                    "status": "installing",
-                    "progress": 100,
-                    "message": install_message
-                }),
+                build_update_progress_payload("installing", 100, install_message),
             );
             Ok(())
         }
         Err(error_msg) => {
             let _ = window.emit(
                 "update-progress",
-                json!({
-                    "status": "error",
-                    "progress": 0,
-                    "message": error_msg.clone()
-                }),
+                build_update_progress_payload("error", 0, error_msg.clone()),
             );
             Err(error_msg)
         }

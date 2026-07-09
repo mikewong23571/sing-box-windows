@@ -680,23 +680,38 @@ where
     Ok(outbounds.len().saturating_sub(1))
 }
 
+/// 注入到 route.rules 时打在每条自定义规则对象上的幂等标记。
+/// sing-box 会忽略未知字段；strip 时按此键精确删除，避免误伤系统规则。
+pub const CUSTOM_RULE_MARKER: &str = "__custom_rule__";
+
+/// 移除此前注入的全部自定义规则（按 `CUSTOM_RULE_MARKER` 识别）。
+pub fn strip_custom_rules(config: &mut Value) {
+    let Some(arr) = config
+        .get_mut("route")
+        .and_then(|r| r.get_mut("rules"))
+        .and_then(|rules| rules.as_array_mut())
+    else {
+        return;
+    };
+    arr.retain(|rule| {
+        rule.as_object()
+            .map(|o| !o.contains_key(CUSTOM_RULE_MARKER))
+            .unwrap_or(true)
+    });
+}
+
 /// 把用户自定义规则注入到已生成的 sing-box 配置的 `route.rules` 中。
 ///
 /// 设计说明：
 /// - 插入位置：在第一条“私网/CN 直连”默认规则**之前**，保证用户自定义规则优先于内置分流。
 ///   具体策略是插到 `route.rules` 数组头部 sniff/resolve/hijack/global/direct-mode 之后，
-///   即“第一条带 rule_set 或 ip_cidr 的默认直连规则”之前；为保持实现简单稳定，
-///   这里统一插到数组末尾、但放在内置私网直连段之前——通过在生成阶段预留标记实现。
-///
-/// 实际实现采用更稳妥的方式：直接把规则插到 `route.rules` 末尾（在 `final` 之前）。
-/// sing-box 规则匹配是顺序匹配，自定义规则放在默认规则之后仍能命中“未被前面规则覆盖”的流量，
-/// 例如自定义“openai.com → direct”会优先生效，因为默认规则里 openai 走代理组（非直连），
-/// 而用户的 direct 规则只会在域名同时命中时由顺序决定——为确保用户意图优先，
-/// 我们把自定义规则插入到默认私网/CN 直连段之前（即 `sniff/resolve/hijack/clash_mode` 之后）。
+///   即“第一条带 rule_set 或 ip_cidr 的默认直连规则”之前。
+/// - 每条注入规则都带 `CUSTOM_RULE_MARKER`，配合 [`strip_custom_rules`] 保证幂等
+///   （多条规则、反复 CRUD、订阅重生后再注入均不会残留或误删系统规则）。
 ///
 /// 参数：
 /// - `config`: 完整 sing-box 配置（会被原地修改）
-/// - `rules`: 用户自定义规则（已过滤 enabled=true）
+/// - `rules`: 用户自定义规则（`to_route_rule` 会过滤 disabled / 空 payload）
 /// - `default_outbound`: action=Proxy 时使用的出站 tag
 ///
 /// 返回注入的规则数量（0 表示无注入，调用方可据此决定是否触发重载）。
@@ -714,7 +729,7 @@ pub fn inject_custom_rules(
         None => return 0,
     };
 
-    let custom_values: Vec<Value> = rules
+    let mut custom_values: Vec<Value> = rules
         .iter()
         .filter_map(|r| r.to_route_rule(default_outbound))
         .collect();
@@ -722,10 +737,18 @@ pub fn inject_custom_rules(
         return 0;
     }
 
+    // 每条自定义规则打标记，便于 strip 精确删除（不依赖数组下标/字段类型启发式）
+    for value in &mut custom_values {
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(CUSTOM_RULE_MARKER.to_string(), Value::Bool(true));
+        }
+    }
+
     let injected = custom_values.len();
 
     // 找到“第一条默认直连/分流规则”的索引（特征：含 rule_set 或 ip_cidr 或 domain），
     // 把自定义规则插到它之前，使自定义规则优先于内置 CN/GeoIP/私网分流。
+    // 注意：调用方应先 strip，否则已有自定义规则也会被当成“默认规则”锚点。
     let insert_pos = route_rules
         .iter()
         .position(|rule| {

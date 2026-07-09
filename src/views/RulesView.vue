@@ -381,7 +381,10 @@ const submitCustomRule = async () => {
   }
 }
 
-const onToggleCustomRule = (id: string) => async () => {
+// 注意：不能写成柯里化 (id) => async () => {}。
+// 模板 `@update:value="onToggleCustomRule(rule.id)"` 在事件触发时求值该表达式，
+// 若返回内层函数则不会被调用，开关永远不会持久化。
+const onToggleCustomRule = async (id: string) => {
   try {
     await rulesStore.toggleCustomRule(id)
   } catch (error) {

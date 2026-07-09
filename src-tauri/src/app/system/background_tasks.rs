@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::OnceCell;
 use tracing::{error, info, warn};
 
@@ -12,7 +12,7 @@ use crate::app::system::update_service::{check_update, UpdateInfo};
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(4 * 60 * 60); // 4h
 const KERNEL_HEALTH_INTERVAL: Duration = Duration::from_secs(10 * 60); // 10min
 
-pub async fn start_background_tasks(app: &AppHandle) {
+pub async fn start_background_tasks<R: Runtime>(app: &AppHandle<R>) {
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         if let Err(e) = start_update_loop(app_handle.clone()).await {
@@ -28,18 +28,33 @@ pub async fn start_background_tasks(app: &AppHandle) {
     });
 }
 
-async fn wait_for_storage(app: &AppHandle) -> Option<Arc<EnhancedStorageService>> {
+/// 等待存储就绪（可注入超时，便于单测）。
+pub(crate) async fn wait_for_storage_with_timeout<R: Runtime>(
+    app: &AppHandle<R>,
+    poll: Duration,
+    max_wait: Duration,
+) -> Option<Arc<EnhancedStorageService>> {
     let storage_cell = app.state::<Arc<OnceCell<Arc<EnhancedStorageService>>>>();
+    let started = std::time::Instant::now();
     loop {
         if let Some(storage) = storage_cell.get() {
             return Some(storage.clone());
         }
+        if started.elapsed() >= max_wait {
+            return None;
+        }
         warn!("存储服务尚未就绪，稍后重试...");
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(poll).await;
     }
 }
 
-async fn start_update_loop(app: AppHandle) -> Result<(), String> {
+async fn wait_for_storage<R: Runtime>(app: &AppHandle<R>) -> Option<Arc<EnhancedStorageService>> {
+    // 生产：无限等待
+    wait_for_storage_with_timeout(app, Duration::from_secs(1), Duration::from_secs(u64::MAX / 4))
+        .await
+}
+
+async fn start_update_loop<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     let version = app.package_info().version.to_string();
     let storage = wait_for_storage(&app).await;
 
@@ -72,7 +87,12 @@ async fn start_update_loop(app: AppHandle) -> Result<(), String> {
     }
 }
 
-async fn handle_update_result(app: &AppHandle, skip_version: &Option<String>, info: UpdateInfo) {
+/// 处理更新检查结果（纯分支 + emit，便于单测）。
+pub(crate) async fn handle_update_result<R: Runtime>(
+    app: &AppHandle<R>,
+    skip_version: &Option<String>,
+    info: UpdateInfo,
+) {
     if info.has_update {
         if skip_version
             .as_ref()
@@ -93,7 +113,7 @@ async fn handle_update_result(app: &AppHandle, skip_version: &Option<String>, in
     }
 }
 
-async fn start_kernel_health_loop(app: AppHandle) -> Result<(), String> {
+async fn start_kernel_health_loop<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     loop {
         match kernel_check_health(None).await {
             Ok(payload) => {
@@ -105,5 +125,77 @@ async fn start_kernel_health_loop(app: AppHandle) -> Result<(), String> {
         }
 
         tokio::time::sleep(KERNEL_HEALTH_INTERVAL).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::system::update_service::UpdateInfo;
+    use crate::test_support::MockAppEnv;
+
+    fn sample_update(has: bool, ver: &str) -> UpdateInfo {
+        UpdateInfo {
+            latest_version: ver.to_string(),
+            download_url: "https://example.com/app.AppImage".into(),
+            release_page_url: "https://example.com/releases".into(),
+            has_update: has,
+            release_notes: Some("notes".into()),
+            release_date: Some("2026-01-01".into()),
+            file_size: Some(1024),
+            is_prerelease: false,
+            supports_in_app_update: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_update_result_branches() {
+        let env = MockAppEnv::new();
+        let h = env.handle();
+
+        // 无更新
+        handle_update_result(&h, &None, sample_update(false, "1.0.0")).await;
+        // 有更新
+        handle_update_result(&h, &None, sample_update(true, "2.0.0")).await;
+        // 跳过版本
+        handle_update_result(
+            &h,
+            &Some("2.0.0".into()),
+            sample_update(true, "2.0.0"),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn wait_for_storage_timeout_and_ready() {
+        let env = MockAppEnv::new();
+        // 未 install → 短超时返回 None
+        let none = wait_for_storage_with_timeout(
+            &env.handle(),
+            Duration::from_millis(10),
+            Duration::from_millis(40),
+        )
+        .await;
+        assert!(none.is_none());
+
+        let db = env.workspace.path().join("bg.db");
+        env.install_storage_from_path(db.to_str().unwrap()).await;
+        let some = wait_for_storage_with_timeout(
+            &env.handle(),
+            Duration::from_millis(10),
+            Duration::from_secs(1),
+        )
+        .await;
+        assert!(some.is_some());
+    }
+
+    #[tokio::test]
+    async fn start_background_tasks_spawns_without_panic() {
+        let env = MockAppEnv::new();
+        let db = env.workspace.path().join("bg2.db");
+        env.install_storage_from_path(db.to_str().unwrap()).await;
+        start_background_tasks(&env.handle()).await;
+        // 给 spawn 一点时间启动循环
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }

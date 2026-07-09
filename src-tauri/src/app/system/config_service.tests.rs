@@ -185,3 +185,91 @@ fn ensure_private_ip_rule_should_append_rule_when_missing() {
     assert_eq!(rules.len(), 2);
     assert!(has_private_ip_rule(&rules));
 }
+
+#[test]
+fn write_default_and_restore_from_bak() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.json");
+    write_default_config(&path, &AppConfig::default()).unwrap();
+    assert!(path.exists());
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(content.contains("inbounds") || content.contains("outbounds") || content.contains("log"));
+
+    let bak = path.with_extension("bak");
+    std::fs::copy(&path, &bak).unwrap();
+    std::fs::write(&path, b"corrupted{{{").unwrap();
+    assert!(try_restore_from_bak(&path).unwrap());
+    let restored: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(restored.is_object());
+
+    // invalid bak
+    std::fs::write(&bak, b"not-json").unwrap();
+    std::fs::write(&path, b"bad").unwrap();
+    assert!(!try_restore_from_bak(&path).unwrap());
+    assert!(!try_restore_from_bak(dir.path().join("missing.json").as_path()).unwrap());
+}
+
+#[test]
+fn backup_corrupted_config_renames() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("c.json");
+    std::fs::write(&path, b"{}").unwrap();
+    backup_corrupted_config(&path);
+    assert!(!path.exists());
+    let backups: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    assert!(!backups.is_empty());
+    backup_corrupted_config(dir.path().join("nope.json").as_path()); // no-op
+}
+
+#[test]
+fn ensure_private_ip_rule_idempotent() {
+    let mut rules = vec![];
+    ensure_private_ip_rule(&mut rules);
+    assert_eq!(rules.len(), 1);
+    ensure_private_ip_rule(&mut rules);
+    assert_eq!(rules.len(), 1);
+}
+
+#[test]
+fn normalize_relative_and_config_json_external() {
+    let (p, migrated) = normalize_active_config_local_path(Some("configs/x.json"));
+    assert!(p.to_string_lossy().contains("configs"));
+    assert!(migrated);
+
+    let (p2, m2) = normalize_active_config_local_path(Some(&outside_config_path("config.json")));
+    assert!(p2.ends_with("config.json"));
+    assert!(m2);
+}
+
+#[test]
+fn patch_ports_into_config_json_all_branches() {
+    use crate::app::singbox::config_generator::generate_base_config;
+    use crate::app::storage::state_model::AppConfig;
+
+    let mut cfg = serde_json::to_value(generate_base_config(&AppConfig::default())).unwrap();
+    // ensure mixed-in exists or inject
+    if cfg["inbounds"].as_array().map(|a| a.is_empty()).unwrap_or(true) {
+        cfg["inbounds"] = json!([{"type":"mixed","tag":"mixed-in","listen_port":1}]);
+    }
+    patch_ports_into_config_json(&mut cfg, 18080, 19090).unwrap();
+    assert!(cfg["experimental"]["clash_api"]["external_controller"]
+        .as_str()
+        .unwrap()
+        .contains("19090"));
+
+    // no experimental
+    let mut bare = json!({"inbounds":[{"tag":"mixed-in","listen_port":1}]});
+    patch_ports_into_config_json(&mut bare, 20000, 20001).unwrap();
+    assert!(bare["experimental"]["clash_api"]["external_controller"]
+        .as_str()
+        .unwrap()
+        .contains("20001"));
+    assert_eq!(bare["inbounds"][0]["listen_port"], 20000);
+
+    assert!(validate_proxy_api_ports(100, 2000).is_err());
+    assert!(validate_proxy_api_ports(2000, 2000).is_err());
+    assert!(validate_proxy_api_ports(2000, 2001).is_ok());
+}

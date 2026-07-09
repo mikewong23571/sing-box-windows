@@ -1,0 +1,63 @@
+name: Backend tests & coverage
+
+on:
+  push:
+    paths:
+      - 'src-tauri/**'
+      - 'scripts/coverage-backend.sh'
+      - '.github/workflows/backend-tests.yml'
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - 'scripts/coverage-backend.sh'
+      - '.github/workflows/backend-tests.yml'
+
+jobs:
+  backend:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Unit + integration tests
+        env:
+          # TempWorkspace serializes env; serial tests reduce races under coverage.
+          RUST_TEST_THREADS: "1"
+          # Short fake-kernel lifetime keeps hermetic tests fast.
+          FAKE_KERNEL_RUN_SECS: "5"
+        run: |
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          cd src-tauri
+          cargo test --features test-util
+
+      - name: Coverage (AC1 minimal ignore; fail-under from repo variable)
+        env:
+          # Default report-only (0). Upgrade via repository variable once measured.
+          COVERAGE_FAIL_UNDER: ${{ vars.COVERAGE_FAIL_UNDER || '0' }}
+          RUST_TEST_THREADS: "1"
+          # Short fake-kernel lifetime keeps hermetic tests fast.
+          FAKE_KERNEL_RUN_SECS: "5"
+        run: bash scripts/coverage-backend.sh
+
+      - name: Upload HTML coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-html
+          path: src-tauri/target/llvm-cov/html
+          if-no-files-found: ignore

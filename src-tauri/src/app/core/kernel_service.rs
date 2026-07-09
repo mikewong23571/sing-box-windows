@@ -1,9 +1,76 @@
 use crate::process::manager::ProcessManager;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 lazy_static::lazy_static! {
-    pub(super) static ref PROCESS_MANAGER: Arc<ProcessManager> =
+    pub(crate) static ref PROCESS_MANAGER: Arc<ProcessManager> =
         Arc::new(ProcessManager::new());
+}
+
+/// 内核进程控制抽象。生产实现为 [`ProcessManager`]；测试中可替换为 Fake。
+#[async_trait::async_trait]
+pub trait KernelProcessControl<R: tauri::Runtime>: Send + Sync {
+    async fn start(
+        &self,
+        app_handle: Option<&tauri::AppHandle<R>>,
+        config_path: &std::path::Path,
+        tun_enabled: bool,
+    ) -> Result<(), String>;
+
+    async fn stop(&self, app_handle: Option<&tauri::AppHandle<R>>) -> Result<(), String>;
+
+    async fn restart(
+        &self,
+        app_handle: &tauri::AppHandle<R>,
+        config_path: &std::path::Path,
+        tun_enabled: bool,
+    ) -> Result<(), String>;
+
+    async fn kill_existing_processes(
+        &self,
+        app_handle: Option<&tauri::AppHandle<R>>,
+    ) -> Result<(), String>;
+
+    async fn force_kill_kernel_processes_by_name(
+        &self,
+        app_handle: Option<&tauri::AppHandle<R>>,
+    ) -> Result<(), String>;
+
+    async fn is_running(&self) -> bool;
+
+    async fn read_stderr_output(&self) -> Option<String>;
+}
+
+static PROCESS_CONTROLLER: RwLock<Option<Arc<dyn KernelProcessControl<tauri::Wry>>>> =
+    RwLock::new(None);
+
+/// 获取全局内核进程控制器的泛型 trait object（生产使用 ProcessManager 单例）。
+pub fn kernel_process_manager_singleton<R: tauri::Runtime>() -> Arc<dyn KernelProcessControl<R>> {
+    Arc::clone(&PROCESS_MANAGER) as Arc<dyn KernelProcessControl<R>>
+}
+
+/// 获取全局内核进程控制器（生产 Runtime 为 Wry）。
+pub fn process_controller() -> Arc<dyn KernelProcessControl<tauri::Wry>> {
+    {
+        let read = PROCESS_CONTROLLER.read().unwrap();
+        if let Some(c) = read.as_ref() {
+            return c.clone();
+        }
+    }
+    let mut write = PROCESS_CONTROLLER.write().unwrap();
+    let controller = write.get_or_insert_with(|| {
+        Arc::clone(&PROCESS_MANAGER) as Arc<dyn KernelProcessControl<tauri::Wry>>
+    });
+    controller.clone()
+}
+
+#[cfg(feature = "test-util")]
+pub fn set_process_controller_for_test(controller: Arc<dyn KernelProcessControl<tauri::Wry>>) {
+    *PROCESS_CONTROLLER.write().unwrap() = Some(controller);
+}
+
+#[cfg(feature = "test-util")]
+pub fn reset_process_controller_for_test() {
+    *PROCESS_CONTROLLER.write().unwrap() = None;
 }
 
 pub mod download;

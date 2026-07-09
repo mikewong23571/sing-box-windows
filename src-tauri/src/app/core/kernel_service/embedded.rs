@@ -6,10 +6,110 @@ use crate::utils::http_client;
 use semver::Version;
 use std::io::Cursor;
 use std::path::Path;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 use tracing::{info, warn};
 
-pub async fn ensure_embedded_kernel(app_handle: &AppHandle) -> Result<Option<String>, String> {
+/// 内嵌内核平台目录名（与资源布局一致）。
+pub(crate) fn embedded_platform_id() -> Option<&'static str> {
+    if cfg!(target_os = "windows") {
+        Some("windows")
+    } else if cfg!(target_os = "linux") {
+        Some("linux")
+    } else if cfg!(target_os = "macos") {
+        Some("macos")
+    } else {
+        None
+    }
+}
+
+/// 当前平台内嵌内核可执行文件名。
+pub(crate) fn embedded_executable_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "sing-box.exe"
+    } else {
+        "sing-box"
+    }
+}
+
+/// 在 resource_dir 下定位内嵌内核目录与二进制（纯 FS）。
+pub(crate) fn find_embedded_kernel_paths(
+    resource_dir: &Path,
+    platform: &str,
+    arch: &str,
+    executable_name: &str,
+) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let candidate_bases = [
+        resource_dir.join("kernel"),
+        resource_dir.join("resources").join("kernel"),
+    ];
+    for base in candidate_bases {
+        let dir = base.join(platform).join(arch);
+        let path = dir.join(executable_name);
+        if path.exists() {
+            return Some((dir, path));
+        }
+    }
+    None
+}
+
+/// 是否应覆盖安装内嵌内核（纯逻辑）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EmbeddedInstallDecision {
+    Install,
+    #[allow(dead_code)]
+    SkipNoLocalAndNoResource,
+    SkipLocalMissingEmbeddedVersion,
+    SkipLocalUnknownVersion,
+    SkipLocalNotOlder,
+    SkipVersionUncomparable,
+}
+
+/// 根据本地/内嵌版本决定是否安装。
+pub(crate) fn decide_embedded_install(
+    local_kernel_exists: bool,
+    embedded_version: Option<&str>,
+    installed_version: Option<&str>,
+) -> EmbeddedInstallDecision {
+    if !local_kernel_exists {
+        return EmbeddedInstallDecision::Install;
+    }
+    let Some(target) = embedded_version else {
+        return EmbeddedInstallDecision::SkipLocalMissingEmbeddedVersion;
+    };
+    let Some(current) = installed_version else {
+        return EmbeddedInstallDecision::SkipLocalUnknownVersion;
+    };
+    match is_embedded_newer(current, target) {
+        Some(true) => EmbeddedInstallDecision::Install,
+        Some(false) => EmbeddedInstallDecision::SkipLocalNotOlder,
+        None => EmbeddedInstallDecision::SkipVersionUncomparable,
+    }
+}
+
+/// 复制内嵌内核到工作目录并设置执行权限（无 AppHandle）。
+pub(crate) async fn copy_embedded_kernel_binary(
+    embedded_kernel_path: &Path,
+    kernel_path: &Path,
+) -> Result<(), String> {
+    if let Some(parent) = kernel_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("创建内核目录失败: {}", e))?;
+    }
+    tokio::fs::copy(embedded_kernel_path, kernel_path)
+        .await
+        .map_err(|e| format!("复制内嵌内核失败: {}", e))?;
+    if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+        if let Err(e) = set_executable_permission(kernel_path) {
+            warn!("设置内核执行权限失败: {}", e);
+        }
+    }
+    Ok(())
+}
+
+pub async fn ensure_embedded_kernel<R: Runtime>(
+    app_handle: &AppHandle<R>,
+) -> Result<Option<String>, String> {
     let kernel_path = paths::get_kernel_path();
 
     let resource_dir = match app_handle.path().resource_dir() {
@@ -20,109 +120,72 @@ pub async fn ensure_embedded_kernel(app_handle: &AppHandle) -> Result<Option<Str
         }
     };
 
-    let platform = if cfg!(target_os = "windows") {
-        "windows"
-    } else if cfg!(target_os = "linux") {
-        "linux"
-    } else if cfg!(target_os = "macos") {
-        "macos"
-    } else {
-        "unknown"
-    };
-
-    if platform == "unknown" {
+    let Some(platform) = embedded_platform_id() else {
         warn!("当前平台不支持内嵌内核安装");
         return Ok(None);
-    }
-
-    let arch = super::versioning::get_system_arch();
-    let executable_name = if cfg!(target_os = "windows") {
-        "sing-box.exe"
-    } else {
-        "sing-box"
     };
 
-    let mut embedded_dir = None;
-    let mut embedded_kernel_path = None;
-    let candidate_bases = [
-        resource_dir.join("kernel"),
-        resource_dir.join("resources").join("kernel"),
-    ];
+    let arch = super::versioning::get_system_arch();
+    let executable_name = embedded_executable_name();
 
-    for base in candidate_bases {
-        let dir = base.join(platform).join(arch);
-        let path = dir.join(executable_name);
-        if path.exists() {
-            embedded_dir = Some(dir);
-            embedded_kernel_path = Some(path);
-            break;
-        }
-    }
-
-    let (embedded_dir, embedded_kernel_path) = match (embedded_dir, embedded_kernel_path) {
-        (Some(dir), Some(path)) => (dir, path),
-        _ => {
-            info!("未找到内嵌内核资源文件，跳过安装");
-            return Ok(None);
-        }
+    let Some((embedded_dir, embedded_kernel_path)) =
+        find_embedded_kernel_paths(&resource_dir, platform, arch, executable_name)
+    else {
+        info!("未找到内嵌内核资源文件，跳过安装");
+        return Ok(None);
     };
     let embedded_version = read_embedded_version(&embedded_dir).await;
 
-    if kernel_path.exists() {
-        let Some(target_version) = embedded_version.as_deref() else {
+    let installed_version = if kernel_path.exists() {
+        resolve_installed_version(app_handle, &kernel_path).await
+    } else {
+        None
+    };
+
+    match decide_embedded_install(
+        kernel_path.exists(),
+        embedded_version.as_deref(),
+        installed_version.as_deref(),
+    ) {
+        EmbeddedInstallDecision::Install => {
+            if kernel_path.exists() {
+                info!(
+                    "检测到内嵌内核版本更新，将覆盖安装: {:?} -> {:?}",
+                    installed_version, embedded_version
+                );
+            } else {
+                info!("未检测到本地内核，准备安装内嵌内核");
+            }
+        }
+        EmbeddedInstallDecision::SkipLocalMissingEmbeddedVersion => {
             info!("当前已存在本地内核，且内嵌资源缺少版本信息，跳过覆盖更新");
             return Ok(None);
-        };
-
-        let installed_version = resolve_installed_version(app_handle, &kernel_path).await;
-        let Some(current_version) = installed_version else {
+        }
+        EmbeddedInstallDecision::SkipLocalUnknownVersion => {
             warn!("当前已存在本地内核，但无法识别版本，跳过覆盖更新");
             return Ok(None);
-        };
-
-        match is_embedded_newer(&current_version, target_version) {
-            Some(true) => {
-                info!(
-                    "检测到内嵌内核版本更新，将覆盖安装: {} -> {}",
-                    current_version, target_version
-                );
-            }
-            Some(false) => {
-                info!(
-                    "本地内核版本不低于内嵌版本，跳过覆盖: 本地={}, 内嵌={}",
-                    current_version, target_version
-                );
+        }
+        EmbeddedInstallDecision::SkipLocalNotOlder => {
+            info!(
+                "本地内核版本不低于内嵌版本，跳过覆盖: 本地={:?}, 内嵌={:?}",
+                installed_version, embedded_version
+            );
+            if let Some(current_version) = installed_version {
                 let _ = save_installed_version(app_handle, current_version).await;
-                return Ok(None);
             }
-            None => {
-                warn!(
-                    "无法比较版本，保守跳过覆盖更新: 本地={}, 内嵌={}",
-                    current_version, target_version
-                );
-                return Ok(None);
-            }
+            return Ok(None);
         }
-    } else {
-        info!("未检测到本地内核，准备安装内嵌内核");
+        EmbeddedInstallDecision::SkipVersionUncomparable => {
+            warn!(
+                "无法比较版本，保守跳过覆盖更新: 本地={:?}, 内嵌={:?}",
+                installed_version, embedded_version
+            );
+            return Ok(None);
+        }
+        EmbeddedInstallDecision::SkipNoLocalAndNoResource => return Ok(None),
     }
 
-    if let Some(parent) = kernel_path.parent() {
-        if let Err(e) = tokio::fs::create_dir_all(parent).await {
-            return Err(format!("创建内核目录失败: {}", e));
-        }
-    }
-
-    // 安装或覆盖更新：从应用资源目录复制内核到工作目录
-    tokio::fs::copy(&embedded_kernel_path, &kernel_path)
-        .await
-        .map_err(|e| format!("复制内嵌内核失败: {}", e))?;
-
-    if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-        if let Err(e) = set_executable_permission(&kernel_path) {
-            warn!("设置内核执行权限失败: {}", e);
-        }
-    }
+    copy_embedded_kernel_binary(&embedded_kernel_path, &kernel_path).await?;
 
     if let Some(version) = embedded_version.clone() {
         let _ = save_installed_version(app_handle, version).await;
@@ -162,7 +225,10 @@ async fn read_embedded_version(embedded_dir: &Path) -> Option<String> {
     }
 }
 
-async fn resolve_installed_version(app_handle: &AppHandle, kernel_path: &Path) -> Option<String> {
+async fn resolve_installed_version<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    kernel_path: &Path,
+) -> Option<String> {
     if let Some(version) = read_kernel_version_from_binary(kernel_path).await {
         return Some(version);
     }
@@ -179,7 +245,10 @@ async fn resolve_installed_version(app_handle: &AppHandle, kernel_path: &Path) -
     None
 }
 
-async fn save_installed_version(app_handle: &AppHandle, version: String) -> Result<(), String> {
+async fn save_installed_version<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    version: String,
+) -> Result<(), String> {
     let normalized = normalize_version_string(&version);
     if normalized.is_empty() {
         return Ok(());
@@ -215,7 +284,7 @@ async fn read_kernel_version_from_binary(kernel_path: &Path) -> Option<String> {
     extract_version_from_output(&String::from_utf8_lossy(&output.stdout))
 }
 
-fn extract_version_from_output(output: &str) -> Option<String> {
+pub(crate) fn extract_version_from_output(output: &str) -> Option<String> {
     for token in output.split_whitespace() {
         let cleaned =
             token.trim_matches(|c: char| c == ':' || c == ',' || c == ';' || c == ')' || c == '(');
@@ -230,11 +299,11 @@ fn extract_version_from_output(output: &str) -> Option<String> {
     None
 }
 
-fn normalize_version_string(raw: &str) -> String {
+pub(crate) fn normalize_version_string(raw: &str) -> String {
     raw.trim().trim_start_matches('v').to_string()
 }
 
-fn is_embedded_newer(current: &str, embedded: &str) -> Option<bool> {
+pub(crate) fn is_embedded_newer(current: &str, embedded: &str) -> Option<bool> {
     let current = normalize_version_string(current);
     let embedded = normalize_version_string(embedded);
 
@@ -257,21 +326,59 @@ const METACUBEXD_URL: &str =
 const METACUBEXD_DIR: &str = "metacubexd";
 const METACUBEXD_DOWNLOAD_TIMEOUT_SECS: u64 = 120;
 
-pub async fn ensure_external_ui() -> Result<(), String> {
-    let work_dir = paths::get_kernel_work_dir();
-    let ui_dir = work_dir.join(METACUBEXD_DIR);
+/// UI 目录是否已就绪（以 index.html 为标志）。
+pub(crate) fn external_ui_ready(work_dir: &Path) -> bool {
+    work_dir.join(METACUBEXD_DIR).join("index.html").exists()
+}
 
-    // 检测 UI 是否已存在（以 index.html 为标志）
-    if ui_dir.join("index.html").exists() {
+/// 从 zip 字节安装 metacubexd 到 work_dir（无网络）。
+pub(crate) async fn install_external_ui_from_zip_bytes(
+    bytes: &[u8],
+    work_dir: &Path,
+) -> Result<(), String> {
+    let ui_dir = work_dir.join(METACUBEXD_DIR);
+    let temp_dir = work_dir.join(format!("{}.tmp", METACUBEXD_DIR));
+    if temp_dir.exists() {
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    extract_zip_to_dir(bytes, &temp_dir)?;
+
+    // GitHub zip 内顶层目录名形如 "metacubexd-gh-pages"，需提取其内容
+    let extracted_content = find_single_subdirectory(&temp_dir);
+    let source_dir = extracted_content.as_ref().unwrap_or(&temp_dir);
+
+    if ui_dir.exists() {
+        let _ = tokio::fs::remove_dir_all(&ui_dir).await;
+    }
+    tokio::fs::rename(source_dir, &ui_dir)
+        .await
+        .map_err(|e| format!("移动 metacubexd 目录失败: {}", e))?;
+
+    if temp_dir.exists() {
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    info!("metacubexd UI 预下载安装完成: {:?}", ui_dir);
+    Ok(())
+}
+
+/// 从任意 URL 下载 zip 并安装 UI（可注入本地 mock）。
+pub(crate) async fn download_and_install_external_ui_from_url(
+    url: &str,
+    work_dir: &Path,
+    timeout_secs: u64,
+) -> Result<(), String> {
+    if external_ui_ready(work_dir) {
         return Ok(());
     }
 
-    info!("metacubexd UI 不存在，开始预下载: {}", METACUBEXD_URL);
+    info!("metacubexd UI 不存在，开始预下载: {}", url);
 
     let client = http_client::get_client();
     let response = client
-        .get(METACUBEXD_URL)
-        .timeout(std::time::Duration::from_secs(METACUBEXD_DOWNLOAD_TIMEOUT_SECS))
+        .get(url)
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .send()
         .await
         .map_err(|e| format!("下载 metacubexd 失败: {}", e))?;
@@ -293,37 +400,35 @@ pub async fn ensure_external_ui() -> Result<(), String> {
         bytes.len()
     );
 
-    // 解压到临时目录，成功后原子重命名到目标位置
-    let temp_dir = work_dir.join(format!("{}.tmp", METACUBEXD_DIR));
-    if temp_dir.exists() {
-        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-    }
+    install_external_ui_from_zip_bytes(&bytes, work_dir).await
+}
 
-    extract_zip_to_dir(&bytes, &temp_dir)?;
+pub async fn ensure_external_ui() -> Result<(), String> {
+    let work_dir = paths::get_kernel_work_dir();
+    download_and_install_external_ui_from_url(
+        METACUBEXD_URL,
+        &work_dir,
+        METACUBEXD_DOWNLOAD_TIMEOUT_SECS,
+    )
+    .await
+}
 
-    // GitHub zip 内顶层目录名形如 "metacubexd-gh-pages"，需提取其内容
-    let extracted_content = find_single_subdirectory(&temp_dir);
-    let source_dir = extracted_content.as_ref().unwrap_or(&temp_dir);
+/// 读取内嵌 version.txt（可测）。
+#[allow(dead_code)]
+pub(crate) async fn read_embedded_version_public(embedded_dir: &Path) -> Option<String> {
+    read_embedded_version(embedded_dir).await
+}
 
-    // 原子替换：先清理旧目录（如果有），再重命名
-    if ui_dir.exists() {
-        let _ = tokio::fs::remove_dir_all(&ui_dir).await;
-    }
-    tokio::fs::rename(source_dir, &ui_dir)
-        .await
-        .map_err(|e| format!("移动 metacubexd 目录失败: {}", e))?;
-
-    // 清理临时目录
-    if temp_dir.exists() {
-        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-    }
-
-    info!("metacubexd UI 预下载安装完成: {:?}", ui_dir);
-    Ok(())
+/// 从二进制运行 version 并解析（可测）。
+#[allow(dead_code)]
+pub(crate) async fn read_kernel_version_from_binary_public(
+    kernel_path: &Path,
+) -> Option<String> {
+    read_kernel_version_from_binary(kernel_path).await
 }
 
 /// 将 zip 数据解压到指定目录
-fn extract_zip_to_dir(bytes: &[u8], target_dir: &Path) -> Result<(), String> {
+pub(crate) fn extract_zip_to_dir(bytes: &[u8], target_dir: &Path) -> Result<(), String> {
     use std::fs;
     fs::create_dir_all(target_dir)
         .map_err(|e| format!("创建临时目录失败: {}", e))?;
@@ -371,7 +476,7 @@ fn extract_zip_to_dir(bytes: &[u8], target_dir: &Path) -> Result<(), String> {
 }
 
 /// 查找 zip 解压后是否只有一个子目录（GitHub zip 通常如此）
-fn find_single_subdirectory(dir: &Path) -> Option<std::path::PathBuf> {
+pub(crate) fn find_single_subdirectory(dir: &Path) -> Option<std::path::PathBuf> {
     let mut entries = std::fs::read_dir(dir).ok()?;
     let first = entries.next()?.ok()?;
     // 如果只有一个条目且是目录，使用它作为源目录
@@ -381,3 +486,8 @@ fn find_single_subdirectory(dir: &Path) -> Option<std::path::PathBuf> {
         None
     }
 }
+
+#[cfg(test)]
+#[path = "embedded.tests.rs"]
+mod tests;
+

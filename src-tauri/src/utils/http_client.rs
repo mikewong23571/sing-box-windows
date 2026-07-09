@@ -165,3 +165,7 @@ pub async fn test_connectivity(
 ) -> Result<Duration, reqwest::Error> {
     HTTP_CLIENT_MANAGER.test_connectivity(url, proxy_url).await
 }
+
+#[cfg(test)]
+#[path = "http_client.tests.rs"]
+mod tests;

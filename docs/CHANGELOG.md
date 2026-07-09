@@ -1,5 +1,13 @@
 # 更新日志
 
+## [v2.3.3] - 2026-07-09
+
+### 🔧 优化改进
+
+- **后端测试覆盖率达标并维持 ≥80%** - 全量 Rust 测试覆盖率从 77%+ 提升至 81.24% line / 74.93% function；新增 3 个注入测试覆盖快速重启、守护进程、自动管理等核心生命周期路径
+- **内核生命周期可测化接缝补完** - `restart_kernel_internal`、`enable_kernel_guard`、`auto_manage_kernel_internal` 均新增 `_with_process` 注入版本，生产入口保持薄包装，测试可替换 `FakeProcessController` 与 `RecordingSystemProxy`
+- **CI 覆盖率渐进式门禁** - `scripts/coverage-backend.sh` 改为 single-pass，workflow 默认 report-only，可通过仓库变量 `COVERAGE_FAIL_UNDER` 逐步收紧
+
 ## [v2.3.1] - 2026-06-17
 
 ### 🐛 问题修复

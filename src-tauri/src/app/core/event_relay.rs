@@ -3,25 +3,27 @@ use serde::Serialize;
 use serde_json::Value;
 use std::cmp::min;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info, warn};
 
-/// 直接的事件发送器，不再使用WebSocket中继
-/// 后端直接连接到sing-box API，然后将数据作为Tauri事件发送到前端
-pub struct EventDirectRelay<R> {
-    app_handle: AppHandle,
-    endpoint: String,
-    event_name: String,
-    parser: Arc<dyn Fn(Value) -> R + Send + Sync>,
-    // API connection details (for future use)
-    // api_port: u16,
-    // token: String,
+/// 构造 Clash API WebSocket 中继端点 URL（纯函数，便于单测）。
+pub(crate) fn build_relay_endpoint(api_port: u16, endpoint: &str, token: &str) -> String {
+    format!("ws://127.0.0.1:{}{}?token={}", api_port, endpoint, token)
 }
 
-impl<R: Send + Sync + 'static + Serialize> EventDirectRelay<R> {
+/// 直接的事件发送器，不再使用WebSocket中继
+/// 后端直接连接到sing-box API，然后将数据作为Tauri事件发送到前端
+pub struct EventDirectRelay<Payload, RT: Runtime = tauri::Wry> {
+    app_handle: AppHandle<RT>,
+    pub(crate) endpoint: String,
+    pub(crate) event_name: String,
+    parser: Arc<dyn Fn(Value) -> Payload + Send + Sync>,
+}
+
+impl<Payload: Send + Sync + 'static + Serialize, RT: Runtime> EventDirectRelay<Payload, RT> {
     pub fn new<F>(
-        app_handle: AppHandle,
+        app_handle: AppHandle<RT>,
         endpoint: &str,
         event_name: &str,
         parser: F,
@@ -29,15 +31,13 @@ impl<R: Send + Sync + 'static + Serialize> EventDirectRelay<R> {
         token: String,
     ) -> Self
     where
-        F: Fn(Value) -> R + Send + Sync + 'static,
+        F: Fn(Value) -> Payload + Send + Sync + 'static,
     {
         Self {
             app_handle,
-            endpoint: format!("ws://127.0.0.1:{}{}?token={}", api_port, endpoint, token),
+            endpoint: build_relay_endpoint(api_port, endpoint, &token),
             event_name: event_name.to_string(),
             parser: Arc::new(parser),
-            // api_port,
-            // token,
         }
     }
 
@@ -102,11 +102,11 @@ impl<R: Send + Sync + 'static + Serialize> EventDirectRelay<R> {
 }
 
 /// 创建流量数据事件发送器
-pub fn create_traffic_event_relay(
-    app_handle: AppHandle,
+pub fn create_traffic_event_relay<RT: Runtime>(
+    app_handle: AppHandle<RT>,
     api_port: u16,
     token: String,
-) -> EventDirectRelay<Value> {
+) -> EventDirectRelay<Value, RT> {
     EventDirectRelay::new(
         app_handle,
         "/traffic",
@@ -118,11 +118,11 @@ pub fn create_traffic_event_relay(
 }
 
 /// 创建内存数据事件发送器
-pub fn create_memory_event_relay(
-    app_handle: AppHandle,
+pub fn create_memory_event_relay<RT: Runtime>(
+    app_handle: AppHandle<RT>,
     api_port: u16,
     token: String,
-) -> EventDirectRelay<Value> {
+) -> EventDirectRelay<Value, RT> {
     EventDirectRelay::new(
         app_handle,
         "/memory",
@@ -134,11 +134,11 @@ pub fn create_memory_event_relay(
 }
 
 /// 创建日志事件发送器
-pub fn create_log_event_relay(
-    app_handle: AppHandle,
+pub fn create_log_event_relay<RT: Runtime>(
+    app_handle: AppHandle<RT>,
     api_port: u16,
     token: String,
-) -> EventDirectRelay<Value> {
+) -> EventDirectRelay<Value, RT> {
     EventDirectRelay::new(
         app_handle,
         "/logs",
@@ -150,11 +150,11 @@ pub fn create_log_event_relay(
 }
 
 /// 创建连接事件发送器
-pub fn create_connection_event_relay(
-    app_handle: AppHandle,
+pub fn create_connection_event_relay<RT: Runtime>(
+    app_handle: AppHandle<RT>,
     api_port: u16,
     token: String,
-) -> EventDirectRelay<Value> {
+) -> EventDirectRelay<Value, RT> {
     EventDirectRelay::new(
         app_handle,
         "/connections",
@@ -165,9 +165,22 @@ pub fn create_connection_event_relay(
     )
 }
 
+/// 事件中继失败后的退避延迟（纯逻辑）。
+pub(crate) fn next_relay_retry_delay(
+    retry_count: u32,
+    current: std::time::Duration,
+    max_retry_delay: std::time::Duration,
+) -> std::time::Duration {
+    if retry_count <= 3 {
+        std::time::Duration::from_secs(retry_count as u64)
+    } else {
+        min(current * 2, max_retry_delay)
+    }
+}
+
 /// 启动事件中继器并在失败时按退避策略重试
-pub async fn start_event_relay_with_retry(
-    relay: EventDirectRelay<Value>,
+pub async fn start_event_relay_with_retry<RT: Runtime>(
+    relay: EventDirectRelay<Value, RT>,
     relay_type: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut retry_count = 0;
@@ -184,13 +197,7 @@ pub async fn start_event_relay_with_retry(
             }
             Err(e) => {
                 retry_count += 1;
-
-                // 根据重试次数调整延迟时间，但不超过最大延迟
-                if retry_count <= 3 {
-                    retry_delay = std::time::Duration::from_secs(retry_count as u64);
-                } else {
-                    retry_delay = min(retry_delay * 2, max_retry_delay);
-                }
+                retry_delay = next_relay_retry_delay(retry_count, retry_delay, max_retry_delay);
 
                 warn!(
                     "⚠️ {}事件中继器失败，{}秒后重试 (第{}次): {}",
@@ -203,5 +210,103 @@ pub async fn start_event_relay_with_retry(
                 tokio::time::sleep(retry_delay).await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::MockAppEnv;
+    use futures_util::SinkExt;
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::accept_async;
+
+    #[test]
+    fn build_relay_endpoint_formats_query() {
+        let url = build_relay_endpoint(9090, "/traffic", "tok");
+        assert_eq!(url, "ws://127.0.0.1:9090/traffic?token=tok");
+        assert!(build_relay_endpoint(1, "logs", "").contains("ws://127.0.0.1:1logs?token="));
+    }
+
+    #[test]
+    fn next_relay_retry_delay_policy() {
+        let max = std::time::Duration::from_secs(10);
+        assert_eq!(
+            next_relay_retry_delay(1, std::time::Duration::from_secs(1), max),
+            std::time::Duration::from_secs(1)
+        );
+        assert_eq!(
+            next_relay_retry_delay(3, std::time::Duration::from_secs(1), max),
+            std::time::Duration::from_secs(3)
+        );
+        assert_eq!(
+            next_relay_retry_delay(4, std::time::Duration::from_secs(3), max),
+            std::time::Duration::from_secs(6)
+        );
+        assert_eq!(
+            next_relay_retry_delay(10, std::time::Duration::from_secs(8), max),
+            max
+        );
+    }
+
+    #[test]
+    fn create_all_relay_factories_with_mock_app() {
+        let env = MockAppEnv::new();
+        let h = env.handle();
+        let t = create_traffic_event_relay(h.clone(), 19090, "a".into());
+        let m = create_memory_event_relay(h.clone(), 19091, "b".into());
+        let l = create_log_event_relay(h.clone(), 19092, "c".into());
+        let c = create_connection_event_relay(h, 19093, "d".into());
+        assert!(t.endpoint.contains("/traffic"));
+        assert!(m.endpoint.contains("/memory"));
+        assert!(l.endpoint.contains("/logs"));
+        assert!(c.endpoint.contains("/connections"));
+        assert_eq!(t.event_name, "traffic-data");
+        assert_eq!(m.event_name, "memory-data");
+        assert_eq!(l.event_name, "log-data");
+        assert_eq!(c.event_name, "connections-data");
+    }
+
+    #[tokio::test]
+    async fn event_relay_start_processes_text_and_close() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = accept_async(stream).await.unwrap();
+            // 有效 JSON
+            ws.send(Message::Text(r#"{"up":1,"down":2}"#.into()))
+                .await
+                .unwrap();
+            // 无效 JSON → warn 分支
+            ws.send(Message::Text("not-json".into())).await.unwrap();
+            // 再发多条以覆盖计数（不要求 100）
+            for i in 0..3 {
+                ws.send(Message::Text(format!(r#"{{"n":{i}}}"#).into()))
+                    .await
+                    .unwrap();
+            }
+            let _ = ws.close(None).await;
+        });
+
+        let env = MockAppEnv::new();
+        let relay = create_traffic_event_relay(env.handle(), port, "t".into());
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), relay.start()).await;
+        assert!(result.is_ok(), "relay should finish within timeout");
+        let err = result.unwrap();
+        // 正常关闭路径应返回 Err(ConnectionAborted) 或类似
+        assert!(err.is_err());
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn event_relay_start_fails_when_no_server() {
+        let env = MockAppEnv::new();
+        // 未监听端口
+        let relay = create_memory_event_relay(env.handle(), 1, "".into());
+        let result = tokio::time::timeout(std::time::Duration::from_secs(3), relay.start()).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_err());
     }
 }

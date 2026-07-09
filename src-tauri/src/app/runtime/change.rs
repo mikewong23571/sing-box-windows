@@ -75,13 +75,13 @@ pub struct RuntimeApplyResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RuntimeActionPlan {
+pub struct RuntimeActionPlan {
     pub patch_active_config: bool,
     pub apply_proxy_runtime: bool,
     pub auto_manage_kernel: bool,
 }
 
-pub(crate) fn plan_runtime_actions(
+pub fn plan_runtime_actions(
     change: RuntimeChange,
     options: &RuntimeApplyOptions,
 ) -> RuntimeActionPlan {
@@ -127,5 +127,45 @@ mod tests {
         assert!(!plan.patch_active_config);
         assert!(plan.apply_proxy_runtime);
         assert!(!plan.auto_manage_kernel);
+    }
+
+    #[test]
+    fn runtime_change_as_str_covers_all_variants() {
+        assert_eq!(RuntimeChange::AppConfigUpdated.as_str(), "app_config_updated");
+        assert_eq!(
+            RuntimeChange::ActiveConfigChanged.as_str(),
+            "active_config_changed"
+        );
+        assert_eq!(
+            RuntimeChange::SubscriptionApplied.as_str(),
+            "subscription_applied"
+        );
+        assert_eq!(
+            RuntimeChange::ProxySettingsChanged.as_str(),
+            "proxy_settings_changed"
+        );
+        assert_eq!(RuntimeChange::KernelUpdated.as_str(), "kernel_updated");
+    }
+
+    #[test]
+    fn options_builder_and_defaults() {
+        let opts = RuntimeApplyOptions::new("reason-x")
+            .force_restart(true)
+            .patch_active_config(true)
+            .use_original_config_hint(Some(true));
+        assert!(opts.force_restart);
+        assert!(opts.patch_active_config);
+        assert_eq!(opts.use_original_config_hint, Some(true));
+        assert_eq!(opts.reason, "reason-x");
+
+        let d = RuntimeApplyOptions::default();
+        assert!(!d.force_restart);
+        assert!(!d.patch_active_config);
+        assert!(d.use_original_config_hint.is_none());
+
+        let plan = plan_runtime_actions(RuntimeChange::KernelUpdated, &opts);
+        assert!(plan.auto_manage_kernel);
+        assert!(!plan.apply_proxy_runtime);
+        assert!(plan.patch_active_config);
     }
 }

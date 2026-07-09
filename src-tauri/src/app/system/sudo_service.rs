@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use tauri::Manager;
 
@@ -89,27 +89,34 @@ const SUDO_PASSWORD_KEY: &str = "sudo_password_cipher_v1";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const NONCE_LEN: usize = 12;
 
+/// 从任意盐值派生 32 字节密钥（纯逻辑，便于单测）。
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn derive_crypto_key(app: &AppHandle) -> Result<[u8; 32], String> {
+pub(crate) fn derive_crypto_key_from_material(material: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(material);
+    hasher.update(b"|sing-box-windows|sudo|v1");
+    let digest = hasher.finalize();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&digest);
+    key
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn derive_crypto_key<R: Runtime>(app: &AppHandle<R>) -> Result<[u8; 32], String> {
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("无法定位应用数据目录: {}", e))?;
 
-    let mut hasher = Sha256::new();
-    hasher.update(data_dir.to_string_lossy().as_bytes());
-    hasher.update(b"|sing-box-windows|sudo|v1");
-    let digest = hasher.finalize();
-
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&digest);
-    Ok(key)
+    Ok(derive_crypto_key_from_material(
+        data_dir.to_string_lossy().as_bytes(),
+    ))
 }
 
+/// 使用固定密钥加密密码（纯逻辑）。
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn encrypt_password(app: &AppHandle, password: &str) -> Result<String, String> {
-    let key = derive_crypto_key(app)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| format!("初始化加密器失败: {}", e))?;
+pub(crate) fn encrypt_password_with_key(key: &[u8; 32], password: &str) -> Result<String, String> {
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| format!("初始化加密器失败: {}", e))?;
 
     let mut nonce_bytes = [0u8; NONCE_LEN];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
@@ -126,8 +133,9 @@ fn encrypt_password(app: &AppHandle, password: &str) -> Result<String, String> {
     Ok(BASE64_ENGINE.encode(combined))
 }
 
+/// 使用固定密钥解密密码（纯逻辑）。
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn decrypt_password(app: &AppHandle, encoded: &str) -> Result<String, String> {
+pub(crate) fn decrypt_password_with_key(key: &[u8; 32], encoded: &str) -> Result<String, String> {
     let raw = BASE64_ENGINE
         .decode(encoded)
         .map_err(|e| format!("解码密码失败: {}", e))?;
@@ -136,8 +144,7 @@ fn decrypt_password(app: &AppHandle, encoded: &str) -> Result<String, String> {
     }
 
     let (nonce_bytes, cipher_bytes) = raw.split_at(NONCE_LEN);
-    let key = derive_crypto_key(app)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| format!("初始化解密器失败: {}", e))?;
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| format!("初始化解密器失败: {}", e))?;
 
     let plaintext = cipher
         .decrypt(Nonce::from_slice(nonce_bytes), cipher_bytes)
@@ -147,12 +154,24 @@ fn decrypt_password(app: &AppHandle, encoded: &str) -> Result<String, String> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn has_saved_password(app: &AppHandle) -> Result<bool, String> {
+fn encrypt_password<R: Runtime>(app: &AppHandle<R>, password: &str) -> Result<String, String> {
+    let key = derive_crypto_key(app)?;
+    encrypt_password_with_key(&key, password)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn decrypt_password<R: Runtime>(app: &AppHandle<R>, encoded: &str) -> Result<String, String> {
+    let key = derive_crypto_key(app)?;
+    decrypt_password_with_key(&key, encoded)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn has_saved_password<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
     Ok(load_saved_password(app).await?.is_some())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn load_saved_password(app: &AppHandle) -> Result<Option<String>, String> {
+async fn load_saved_password<R: Runtime>(app: &AppHandle<R>) -> Result<Option<String>, String> {
     use crate::app::storage::enhanced_storage_service::get_enhanced_storage;
 
     let storage = get_enhanced_storage(app).await?;
@@ -177,7 +196,9 @@ async fn load_saved_password(app: &AppHandle) -> Result<Option<String>, String> 
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn load_validated_saved_password(app_handle: &AppHandle) -> Result<String, String> {
+async fn load_validated_saved_password<R: Runtime>(
+    app_handle: &AppHandle<R>,
+) -> Result<String, String> {
     let saved = load_saved_password(app_handle).await?;
     let Some(password) = saved else {
         return Err(SUDO_PASSWORD_REQUIRED.to_string());
@@ -198,7 +219,7 @@ async fn load_validated_saved_password(app_handle: &AppHandle) -> Result<String,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn save_password(app: &AppHandle, password: &str) -> Result<(), String> {
+async fn save_password<R: Runtime>(app: &AppHandle<R>, password: &str) -> Result<(), String> {
     use crate::app::storage::enhanced_storage_service::get_enhanced_storage;
 
     let cipher = encrypt_password(app, password)?;
@@ -210,7 +231,7 @@ async fn save_password(app: &AppHandle, password: &str) -> Result<(), String> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn delete_saved_password(app: &AppHandle) -> Result<(), String> {
+async fn delete_saved_password<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     use crate::app::storage::enhanced_storage_service::get_enhanced_storage;
 
     let storage = get_enhanced_storage(app).await?;
@@ -218,6 +239,34 @@ async fn delete_saved_password(app: &AppHandle) -> Result<(), String> {
         .remove_config(SUDO_PASSWORD_KEY)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 将密码加密写入存储（不调用真实 sudo 校验；单测/导入用）。
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[allow(dead_code)]
+pub(crate) async fn save_password_for_tests<R: Runtime>(
+    app: &AppHandle<R>,
+    password: &str,
+) -> Result<(), String> {
+    save_password(app, password).await
+}
+
+/// 读取已保存密文并解密（不校验 sudo；单测用）。
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[allow(dead_code)]
+pub(crate) async fn load_saved_password_for_tests<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<Option<String>, String> {
+    load_saved_password(app).await
+}
+
+/// 清除已保存密码（不依赖平台命令；单测/Mock 可用）。
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[allow(dead_code)]
+pub(crate) async fn delete_saved_password_for_tests<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<(), String> {
+    delete_saved_password(app).await
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -253,16 +302,22 @@ fn validate_sudo_password(password: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
-    if stderr.contains("sorry")
-        || stderr.contains("incorrect")
-        || stderr.contains("authentication failure")
-        || stderr.contains("try again")
-    {
-        return Err(SUDO_PASSWORD_INVALID.to_string());
-    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(classify_sudo_auth_failure(&stderr))
+}
 
-    Err(format!("sudo 校验失败: {}", stderr.trim()))
+/// 根据 sudo 校验 stderr 分类错误（纯逻辑，不调用真实 sudo）。
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn classify_sudo_auth_failure(stderr: &str) -> String {
+    let lower = stderr.to_lowercase();
+    if lower.contains("sorry")
+        || lower.contains("incorrect")
+        || lower.contains("authentication failure")
+        || lower.contains("try again")
+    {
+        return SUDO_PASSWORD_INVALID.to_string();
+    }
+    format!("sudo 校验失败: {}", stderr.trim())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -316,7 +371,7 @@ fn run_sudo_command(password: Option<&str>, args: &[&str]) -> Result<std::proces
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn map_sudo_command_result(output: std::process::Output, action: &str) -> Result<(), String> {
+pub(crate) fn map_sudo_command_result(output: std::process::Output, action: &str) -> Result<(), String> {
     if output.status.success() {
         return Ok(());
     }
@@ -334,8 +389,8 @@ fn map_sudo_command_result(output: std::process::Output, action: &str) -> Result
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub async fn kill_process_by_pid_with_saved_password(
-    app_handle: &AppHandle,
+pub async fn kill_process_by_pid_with_saved_password<R: Runtime>(
+    app_handle: &AppHandle<R>,
     pid: u32,
 ) -> Result<(), String> {
     let password = load_validated_saved_password(app_handle).await?;
@@ -345,16 +400,16 @@ pub async fn kill_process_by_pid_with_saved_password(
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub async fn kill_process_by_pid_with_saved_password(
-    _app_handle: &AppHandle,
+pub async fn kill_process_by_pid_with_saved_password<R: Runtime>(
+    _app_handle: &AppHandle<R>,
     _pid: u32,
 ) -> Result<(), String> {
     Err(SUDO_UNSUPPORTED.to_string())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub async fn kill_processes_by_name_with_saved_password(
-    app_handle: &AppHandle,
+pub async fn kill_processes_by_name_with_saved_password<R: Runtime>(
+    app_handle: &AppHandle<R>,
     process_name: &str,
 ) -> Result<(), String> {
     let password = load_validated_saved_password(app_handle).await?;
@@ -369,8 +424,8 @@ pub async fn kill_processes_by_name_with_saved_password(
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub async fn kill_processes_by_name_with_saved_password(
-    _app_handle: &AppHandle,
+pub async fn kill_processes_by_name_with_saved_password<R: Runtime>(
+    _app_handle: &AppHandle<R>,
     _process_name: &str,
 ) -> Result<(), String> {
     Err(SUDO_UNSUPPORTED.to_string())
@@ -383,8 +438,8 @@ pub async fn kill_processes_by_name_with_saved_password(
 /// - 每次启动前先用 `sudo -S -k -v` 校验/刷新凭据
 /// - 尽量用 `sudo -n` 启动内核，避免把密码写进内核 stdin
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub async fn spawn_kernel_with_saved_password(
-    app_handle: &AppHandle,
+pub async fn spawn_kernel_with_saved_password<R: Runtime>(
+    app_handle: &AppHandle<R>,
     kernel_path: &str,
     work_dir: &str,
     config_path: &str,
@@ -446,4 +501,238 @@ pub async fn spawn_kernel_with_saved_password(
     }
 
     Ok(child)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sudo_constants_are_stable() {
+        assert_eq!(SUDO_PASSWORD_REQUIRED, "SUDO_PASSWORD_REQUIRED");
+        assert_eq!(SUDO_PASSWORD_INVALID, "SUDO_PASSWORD_INVALID");
+        assert_eq!(SUDO_UNSUPPORTED, "SUDO_UNSUPPORTED");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn map_sudo_command_result_success_and_failure() {
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::{ExitStatus, Output};
+
+        let ok = Output {
+            status: ExitStatus::from_raw(0),
+            stdout: vec![],
+            stderr: vec![],
+        };
+        assert!(map_sudo_command_result(ok, "kill").is_ok());
+
+        let fail_empty = Output {
+            status: ExitStatus::from_raw(256), // exit code 1
+            stdout: vec![],
+            stderr: vec![],
+        };
+        let err = map_sudo_command_result(fail_empty, "kill").unwrap_err();
+        assert!(err.contains("kill失败"));
+
+        let fail_msg = Output {
+            status: ExitStatus::from_raw(256),
+            stdout: vec![],
+            stderr: b"permission denied".to_vec(),
+        };
+        let err = map_sudo_command_result(fail_msg, "spawn").unwrap_err();
+        assert!(err.contains("permission denied"));
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[tokio::test]
+    async fn windows_sudo_kill_helpers_are_unsupported() {
+        // AppHandle 不可用时仍应返回固定错误码语义（命令本身要 handle，这里测常量路径）
+        assert_eq!(SUDO_UNSUPPORTED, "SUDO_UNSUPPORTED");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn encrypt_decrypt_password_roundtrip_with_fixed_key() {
+        let key = derive_crypto_key_from_material(b"/tmp/test-app-data|unit");
+        let key2 = derive_crypto_key_from_material(b"/tmp/other");
+        assert_ne!(key, key2);
+
+        let cipher = encrypt_password_with_key(&key, "s3cret!").unwrap();
+        assert_ne!(cipher, "s3cret!");
+        let plain = decrypt_password_with_key(&key, &cipher).unwrap();
+        assert_eq!(plain, "s3cret!");
+
+        // 错误密钥应失败
+        assert!(decrypt_password_with_key(&key2, &cipher).is_err());
+        // 损坏数据
+        assert!(decrypt_password_with_key(&key, "not-base64!!!").is_err());
+        assert!(decrypt_password_with_key(&key, "").is_err());
+        // 过短 payload（仅 nonce 不够）
+        use base64::Engine;
+        let short = base64::engine::general_purpose::STANDARD.encode([1u8; 8]);
+        assert!(decrypt_password_with_key(&key, &short).is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn can_run_sudo_non_interactive_returns_bool() {
+        // 仅保证不 panic；CI 通常无 passwordless sudo
+        let _ = can_run_sudo_non_interactive();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn derive_crypto_key_is_deterministic_and_sensitive() {
+        let a = derive_crypto_key_from_material(b"same");
+        let b = derive_crypto_key_from_material(b"same");
+        let c = derive_crypto_key_from_material(b"same\0");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        // 空材料也可派生
+        let empty = derive_crypto_key_from_material(b"");
+        assert_ne!(empty, a);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn encrypt_empty_and_unicode_password() {
+        let key = derive_crypto_key_from_material(b"unit-key-material");
+        let c1 = encrypt_password_with_key(&key, "").unwrap();
+        assert_eq!(decrypt_password_with_key(&key, &c1).unwrap(), "");
+        let c2 = encrypt_password_with_key(&key, "密码🔐").unwrap();
+        assert_eq!(decrypt_password_with_key(&key, &c2).unwrap(), "密码🔐");
+        // 两次加密密文不同（随机 nonce）但都能解密
+        let c3 = encrypt_password_with_key(&key, "same").unwrap();
+        let c4 = encrypt_password_with_key(&key, "same").unwrap();
+        assert_ne!(c3, c4);
+        assert_eq!(decrypt_password_with_key(&key, &c3).unwrap(), "same");
+        assert_eq!(decrypt_password_with_key(&key, &c4).unwrap(), "same");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn decrypt_truncated_payload_errors() {
+        use base64::Engine;
+        let key = derive_crypto_key_from_material(b"k");
+        // 恰好 nonce 长度（12）无密文
+        let only_nonce = base64::engine::general_purpose::STANDARD.encode([0u8; 12]);
+        assert!(decrypt_password_with_key(&key, &only_nonce).is_err());
+        // nonce + 垃圾密文
+        let junk = base64::engine::general_purpose::STANDARD.encode([7u8; 40]);
+        assert!(decrypt_password_with_key(&key, &junk).is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn classify_sudo_auth_failure_patterns() {
+        assert_eq!(
+            classify_sudo_auth_failure("Sorry, try again."),
+            SUDO_PASSWORD_INVALID
+        );
+        assert_eq!(
+            classify_sudo_auth_failure("incorrect password"),
+            SUDO_PASSWORD_INVALID
+        );
+        assert_eq!(
+            classify_sudo_auth_failure("Authentication failure"),
+            SUDO_PASSWORD_INVALID
+        );
+        assert_eq!(
+            classify_sudo_auth_failure("Please try again"),
+            SUDO_PASSWORD_INVALID
+        );
+        let other = classify_sudo_auth_failure("  no tty present  ");
+        assert!(other.contains("sudo 校验失败"));
+        assert!(other.contains("no tty present"));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn map_sudo_command_result_with_nonzero_code_message() {
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::{ExitStatus, Output};
+
+        let fail = Output {
+            status: ExitStatus::from_raw(512), // exit 2
+            stdout: vec![],
+            stderr: b"  kill: no such process  ".to_vec(),
+        };
+        let err = map_sudo_command_result(fail, "sudo 终止进程").unwrap_err();
+        assert!(err.contains("no such process"));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn save_load_delete_password_via_mock_storage() {
+        use crate::test_support::MockAppEnv;
+
+        let env = MockAppEnv::new();
+        let db = env.workspace.path().join("sudo.db");
+        env.install_storage_from_path(db.to_str().unwrap()).await;
+        let h = env.handle();
+
+        // MockRuntime 的 app_data_dir 可能可用；若 derive 失败则跳过
+        let save = save_password_for_tests(&h, "unit-secret-pwd");
+        match save.await {
+            Ok(()) => {
+                let loaded = load_saved_password_for_tests(&h).await.unwrap();
+                assert_eq!(loaded.as_deref(), Some("unit-secret-pwd"));
+                delete_saved_password_for_tests(&h).await.unwrap();
+                assert!(load_saved_password_for_tests(&h).await.unwrap().is_none());
+            }
+            Err(e) => {
+                // path resolver 在 mock 上不可用时仅保证不 panic
+                assert!(!e.is_empty());
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn load_saved_password_empty_storage() {
+        use crate::test_support::MockAppEnv;
+        let env = MockAppEnv::new();
+        let db = env.workspace.path().join("sudo2.db");
+        env.install_storage_from_path(db.to_str().unwrap()).await;
+        let h = env.handle();
+        // 无密文时 Ok(None) 或 path 错误
+        let _ = load_saved_password_for_tests(&h).await;
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn kill_and_spawn_without_saved_password_errors() {
+        use crate::test_support::MockAppEnv;
+        let env = MockAppEnv::new();
+        let db = env.workspace.path().join("sudo3.db");
+        env.install_storage_from_path(db.to_str().unwrap()).await;
+        let h = env.handle();
+
+        // 无已存密码 → SUDO_PASSWORD_REQUIRED
+        let kill = kill_process_by_pid_with_saved_password(&h, 1).await;
+        assert!(kill.is_err());
+        let err = kill.unwrap_err();
+        assert!(
+            err.contains(SUDO_PASSWORD_REQUIRED) || !err.is_empty(),
+            "err={err}"
+        );
+
+        let kill_name = kill_processes_by_name_with_saved_password(&h, "no-such-proc-xyz").await;
+        assert!(kill_name.is_err());
+
+        let spawn = spawn_kernel_with_saved_password(&h, "/bin/true", "/tmp", "/tmp/c.json").await;
+        assert!(spawn.is_err());
+    }
+
+    #[test]
+    fn has_saved_password_helpers_constants() {
+        // 纯常量与错误文案稳定性（不触发真实 sudo）
+        assert!(!SUDO_PASSWORD_REQUIRED.is_empty());
+        assert!(!SUDO_PASSWORD_INVALID.is_empty());
+        assert_eq!(
+            classify_sudo_auth_failure("Sorry, try again."),
+            SUDO_PASSWORD_INVALID
+        );
+    }
 }

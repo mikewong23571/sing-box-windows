@@ -5,10 +5,52 @@ use crate::entity::config_model;
 use crate::utils::config_util::ConfigUtil;
 use crate::utils::http_client;
 use crate::utils::proxy_util::{disable_system_proxy, enable_system_proxy, DEFAULT_BYPASS_LIST};
+
+/// 系统代理端口（D-PROXY）：生产用 OS 实现，测试用 Recording。
+pub trait SystemProxyPort: Send + Sync {
+    fn enable(&self, host: &str, port: u16, bypass: Option<&str>) -> Result<(), String>;
+    fn disable(&self) -> Result<(), String>;
+}
+
+/// 默认系统代理适配器（委托 `proxy_util`）。
+pub struct OsSystemProxy;
+
+impl SystemProxyPort for OsSystemProxy {
+    fn enable(&self, host: &str, port: u16, bypass: Option<&str>) -> Result<(), String> {
+        enable_system_proxy(host, port, bypass).map_err(|e| e.to_string())
+    }
+
+    fn disable(&self) -> Result<(), String> {
+        disable_system_proxy().map_err(|e| e.to_string())
+    }
+}
+
+/// 可记录调用的假系统代理（测试/E2E hermetic）。
+#[derive(Debug, Default)]
+pub struct RecordingSystemProxy {
+    pub enables: std::sync::Mutex<Vec<(String, u16, Option<String>)>>,
+    pub disables: std::sync::Mutex<u32>,
+}
+
+impl SystemProxyPort for RecordingSystemProxy {
+    fn enable(&self, host: &str, port: u16, bypass: Option<&str>) -> Result<(), String> {
+        self.enables
+            .lock()
+            .unwrap()
+            .push((host.to_string(), port, bypass.map(|s| s.to_string())));
+        Ok(())
+    }
+
+    fn disable(&self) -> Result<(), String> {
+        *self.disables.lock().unwrap() += 1;
+        Ok(())
+    }
+}
 use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
+use std::path::Path;
 use std::time::Duration;
 use tracing::{error, info, warn};
 use url::Url;
@@ -35,7 +77,7 @@ impl ProxyRuntimeState {
     }
 }
 
-fn resolve_proxy_listen_address(state: &ProxyRuntimeState) -> &'static str {
+pub(crate) fn resolve_proxy_listen_address(state: &ProxyRuntimeState) -> &'static str {
     if state.allow_lan_access {
         network_config::DEFAULT_LISTEN_ADDRESS
     } else {
@@ -43,7 +85,7 @@ fn resolve_proxy_listen_address(state: &ProxyRuntimeState) -> &'static str {
     }
 }
 
-fn build_inbounds_for_state(state: &ProxyRuntimeState) -> Vec<config_model::Inbound> {
+pub(crate) fn build_inbounds_for_state(state: &ProxyRuntimeState) -> Vec<config_model::Inbound> {
     if state.tun_enabled {
         let mut inbounds =
             TunProfile::from_options(&state.tun_options, None).to_inbounds(state.proxy_port);
@@ -72,18 +114,123 @@ fn build_inbounds_for_state(state: &ProxyRuntimeState) -> Vec<config_model::Inbo
 }
 
 use crate::app::storage::enhanced_storage_service::db_get_app_config;
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
-async fn load_allow_lan_access(app_handle: &AppHandle) -> bool {
+async fn load_allow_lan_access<R: Runtime>(app_handle: &AppHandle<R>) -> bool {
     db_get_app_config(app_handle.clone())
         .await
         .map(|config| config.allow_lan_access)
         .unwrap_or(false)
 }
 
-pub async fn apply_proxy_runtime_state(
-    app_handle: &AppHandle,
+/// 构造系统代理模式运行态（纯逻辑，供命令与单测复用）。
+pub(crate) fn build_system_proxy_runtime_state(
+    port: u16,
+    allow_lan_access: bool,
+    system_proxy_bypass: String,
+) -> ProxyRuntimeState {
+    ProxyRuntimeState {
+        proxy_port: port,
+        allow_lan_access,
+        system_proxy_enabled: true,
+        tun_enabled: false,
+        system_proxy_bypass,
+        tun_options: TunProxyOptions::default(),
+    }
+}
+
+/// 构造手动代理模式运行态（纯逻辑）。
+pub(crate) fn build_manual_proxy_runtime_state(
+    port: u16,
+    allow_lan_access: bool,
+) -> ProxyRuntimeState {
+    ProxyRuntimeState {
+        proxy_port: port,
+        allow_lan_access,
+        system_proxy_enabled: false,
+        tun_enabled: false,
+        system_proxy_bypass: DEFAULT_BYPASS_LIST.to_string(),
+        tun_options: TunProxyOptions::default(),
+    }
+}
+
+/// 构造 TUN 模式运行态（纯逻辑）。
+pub(crate) fn build_tun_proxy_runtime_state(
+    port: u16,
+    allow_lan_access: bool,
+    tun_options: TunProxyOptions,
+) -> ProxyRuntimeState {
+    ProxyRuntimeState {
+        proxy_port: port,
+        allow_lan_access,
+        system_proxy_enabled: false,
+        tun_enabled: true,
+        system_proxy_bypass: DEFAULT_BYPASS_LIST.to_string(),
+        tun_options,
+    }
+}
+
+/// 将 runtime state 的 inbounds 写入已有 sing-box 配置文件（纯 FS，无系统代理副作用）。
+pub fn write_inbounds_for_state(config_path: &Path, state: &ProxyRuntimeState) -> Result<(), String> {
+    let config_path_str = config_path
+        .to_str()
+        .ok_or_else(|| "配置文件路径包含无效字符".to_string())?;
+
+    let mut json_util = ConfigUtil::new(config_path_str)
+        .map_err(|e| format!("{}: {}", messages::ERR_CONFIG_READ_FAILED, e))?;
+
+    let inbounds = build_inbounds_for_state(state);
+    json_util.update_key(
+        vec!["inbounds"],
+        serde_json::to_value(inbounds).map_err(|e| format!("序列化配置失败: {}", e))?,
+    );
+    json_util
+        .save_to_file()
+        .map_err(|e| format!("{}: {}", messages::ERR_CONFIG_READ_FAILED, e))?;
+    Ok(())
+}
+
+/// 应用系统代理开关（可注入端口，默认 OS）。
+pub fn apply_system_proxy_for_state(
     state: &ProxyRuntimeState,
+    proxy: &dyn SystemProxyPort,
+) -> Result<(), String> {
+    if state.system_proxy_enabled {
+        let bypass = state.system_proxy_bypass.trim();
+        let normalized_bypass = if bypass.is_empty() {
+            DEFAULT_BYPASS_LIST.to_string()
+        } else {
+            bypass.to_string()
+        };
+        proxy
+            .enable(
+                network_config::DEFAULT_CLASH_API_ADDRESS,
+                state.proxy_port,
+                Some(normalized_bypass.as_str()),
+            )
+            .map_err(|e| format!("设置系统代理失败: {}", e))?;
+        info!(
+            "系统代理已启用，端口 {}，绕过列表: {}",
+            state.proxy_port, normalized_bypass
+        );
+    } else if let Err(err) = proxy.disable() {
+        warn!("关闭系统代理失败: {}", err);
+    }
+    Ok(())
+}
+
+pub async fn apply_proxy_runtime_state<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    state: &ProxyRuntimeState,
+) -> Result<(), String> {
+    apply_proxy_runtime_state_with(app_handle, state, &OsSystemProxy).await
+}
+
+/// 可注入 SystemProxy 的运行态应用（E2E/单测 hermetic）。
+pub async fn apply_proxy_runtime_state_with<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    state: &ProxyRuntimeState,
+    proxy: &dyn SystemProxyPort,
 ) -> Result<(), String> {
     config_service::ensure_singbox_config(app_handle)
         .await
@@ -100,116 +247,50 @@ pub async fn apply_proxy_runtime_state(
         paths::get_config_dir().join("config.json")
     };
 
-    let config_path_str = config_path
-        .to_str()
-        .ok_or_else(|| "配置文件路径包含无效字符".to_string())?;
-
-    let mut json_util = ConfigUtil::new(config_path_str)
-        .map_err(|e| format!("{}: {}", messages::ERR_CONFIG_READ_FAILED, e))?;
-
-    let inbounds = build_inbounds_for_state(state);
-    json_util.update_key(
-        vec!["inbounds"],
-        serde_json::to_value(inbounds).map_err(|e| format!("序列化配置失败: {}", e))?,
-    );
-    json_util
-        .save_to_file()
-        .map_err(|e| format!("{}: {}", messages::ERR_CONFIG_READ_FAILED, e))?;
-
-    if state.system_proxy_enabled {
-        let bypass = state.system_proxy_bypass.trim();
-        let normalized_bypass = if bypass.is_empty() {
-            DEFAULT_BYPASS_LIST.to_string()
-        } else {
-            bypass.to_string()
-        };
-        enable_system_proxy(
-            network_config::DEFAULT_CLASH_API_ADDRESS,
-            state.proxy_port,
-            Some(normalized_bypass.as_str()),
-        )
-        .map_err(|e| format!("设置系统代理失败: {}", e))?;
-        info!(
-            "系统代理已启用，端口 {}，绕过列表: {}",
-            state.proxy_port, normalized_bypass
-        );
-    } else if let Err(err) = disable_system_proxy() {
-        warn!("关闭系统代理失败: {}", err);
-    }
-
+    write_inbounds_for_state(&config_path, state)?;
+    apply_system_proxy_for_state(state, proxy)?;
     Ok(())
 }
 
 // 修改代理模式为系统代理
 #[tauri::command]
-pub async fn set_system_proxy(
-    app_handle: AppHandle,
+pub async fn set_system_proxy<R: Runtime>(
+    app_handle: AppHandle<R>,
     port: u16,
     system_proxy_bypass: Option<String>,
 ) -> Result<(), String> {
     let allow_lan_access = load_allow_lan_access(&app_handle).await;
-    let runtime_state = ProxyRuntimeState {
-        proxy_port: port,
+    let runtime_state = build_system_proxy_runtime_state(
+        port,
         allow_lan_access,
-        system_proxy_enabled: true,
-        tun_enabled: false,
-        system_proxy_bypass: system_proxy_bypass.unwrap_or_else(|| DEFAULT_BYPASS_LIST.to_string()),
-        tun_options: TunProxyOptions::default(),
-    };
+        system_proxy_bypass.unwrap_or_else(|| DEFAULT_BYPASS_LIST.to_string()),
+    );
     apply_proxy_runtime_state(&app_handle, &runtime_state).await
 }
 
 // 设置手动代理模式（不自动设置系统代理）
 #[tauri::command]
-pub async fn set_manual_proxy(app_handle: AppHandle, port: u16) -> Result<(), String> {
+pub async fn set_manual_proxy<R: Runtime>(app_handle: AppHandle<R>, port: u16) -> Result<(), String> {
     let allow_lan_access = load_allow_lan_access(&app_handle).await;
-    let runtime_state = ProxyRuntimeState {
-        proxy_port: port,
-        allow_lan_access,
-        system_proxy_enabled: false,
-        tun_enabled: false,
-        system_proxy_bypass: DEFAULT_BYPASS_LIST.to_string(),
-        tun_options: TunProxyOptions::default(),
-    };
+    let runtime_state = build_manual_proxy_runtime_state(port, allow_lan_access);
     apply_proxy_runtime_state(&app_handle, &runtime_state).await
 }
 
 // 修改TUN 模式为代理模式
 #[tauri::command]
-pub async fn set_tun_proxy(
-    app_handle: AppHandle,
+pub async fn set_tun_proxy<R: Runtime>(
+    app_handle: AppHandle<R>,
     port: u16,
     tun_options: Option<TunProxyOptions>,
 ) -> Result<(), String> {
     let allow_lan_access = load_allow_lan_access(&app_handle).await;
-    let runtime_state = ProxyRuntimeState {
-        proxy_port: port,
-        allow_lan_access,
-        system_proxy_enabled: false,
-        tun_enabled: true,
-        system_proxy_bypass: DEFAULT_BYPASS_LIST.to_string(),
-        tun_options: tun_options.unwrap_or_default(),
-    };
+    let runtime_state =
+        build_tun_proxy_runtime_state(port, allow_lan_access, tun_options.unwrap_or_default());
     apply_proxy_runtime_state(&app_handle, &runtime_state).await
 }
 
-pub async fn update_dns_strategy(app_handle: &AppHandle, prefer_ipv6: bool) -> Result<(), String> {
-    // 从数据库获取配置路径
-    let app_config = db_get_app_config(app_handle.clone())
-        .await
-        .map_err(|e| format!("获取应用配置失败: {}", e))?;
-
-    let config_path = if let Some(path_str) = app_config.active_config_path {
-        std::path::PathBuf::from(path_str)
-    } else {
-        paths::get_config_dir().join("config.json")
-    };
-
-    let content =
-        fs::read_to_string(&config_path).map_err(|e| format!("读取配置文件失败: {}", e))?;
-    let mut config: Value =
-        serde_json::from_str(&content).map_err(|e| format!("解析配置文件失败: {}", e))?;
-
+/// 纯逻辑：在 sing-box 配置 JSON 上写入 DNS strategy（无 FS / AppHandle）。
+pub(crate) fn apply_dns_strategy_to_config(config: &mut Value, prefer_ipv6: bool) -> Result<(), String> {
     let strategy_value = if prefer_ipv6 {
         "prefer_ipv6"
     } else {
@@ -259,16 +340,46 @@ pub async fn update_dns_strategy(app_handle: &AppHandle, prefer_ipv6: bool) -> R
         }
     }
 
+    Ok(())
+}
+
+/// 纯 FS：对指定配置文件应用 DNS strategy。
+pub(crate) fn update_dns_strategy_on_path(config_path: &Path, prefer_ipv6: bool) -> Result<(), String> {
+    let content =
+        fs::read_to_string(config_path).map_err(|e| format!("读取配置文件失败: {}", e))?;
+    let mut config: Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析配置文件失败: {}", e))?;
+    apply_dns_strategy_to_config(&mut config, prefer_ipv6)?;
     let serialized =
         serde_json::to_string_pretty(&config).map_err(|e| format!("序列化配置失败: {}", e))?;
-    fs::write(&config_path, serialized).map_err(|e| format!("保存配置文件失败: {}", e))?;
-
+    fs::write(config_path, serialized).map_err(|e| format!("保存配置文件失败: {}", e))?;
     Ok(())
+}
+
+pub async fn update_dns_strategy<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    prefer_ipv6: bool,
+) -> Result<(), String> {
+    // 从数据库获取配置路径
+    let app_config = db_get_app_config(app_handle.clone())
+        .await
+        .map_err(|e| format!("获取应用配置失败: {}", e))?;
+
+    let config_path = if let Some(path_str) = app_config.active_config_path {
+        std::path::PathBuf::from(path_str)
+    } else {
+        paths::get_config_dir().join("config.json")
+    };
+
+    update_dns_strategy_on_path(&config_path, prefer_ipv6)
 }
 
 // 切换 IPV6版本模式
 #[tauri::command]
-pub async fn toggle_ip_version(app_handle: AppHandle, prefer_ipv6: bool) -> Result<(), String> {
+pub async fn toggle_ip_version<R: Runtime>(
+    app_handle: AppHandle<R>,
+    prefer_ipv6: bool,
+) -> Result<(), String> {
     info!(
         "开始切换IP版本模式: {}",
         if prefer_ipv6 { "IPv6优先" } else { "仅IPv4" }
@@ -291,7 +402,7 @@ pub fn get_api_token() -> String {
     "".to_string()
 }
 
-fn build_controller_url(port: u16, path: &str) -> String {
+pub(crate) fn build_controller_url(port: u16, path: &str) -> String {
     format!("http://127.0.0.1:{}/{}", port, path.trim_start_matches('/'))
 }
 
@@ -463,7 +574,7 @@ pub async fn change_proxy(group: String, proxy: String, port: u16) -> Result<(),
     }
 }
 
-async fn resolve_group_nodes(port: u16, group: &str) -> Result<Vec<String>, String> {
+pub(crate) async fn resolve_group_nodes(port: u16, group: &str) -> Result<Vec<String>, String> {
     let data = get_proxies(port).await?;
 
     let group_value = data
@@ -567,7 +678,7 @@ pub struct ProxyDelayTestResult {
     pub success_samples: u8,
 }
 
-fn normalize_test_url(candidate: &str) -> String {
+pub(crate) fn normalize_test_url(candidate: &str) -> String {
     // 允许用户输入 http(s) URL；其它情况直接回退默认值，避免构造出无效的 query 导致测速失真。
     if let Ok(parsed) = Url::parse(candidate) {
         if parsed.scheme() == "http" || parsed.scheme() == "https" {
@@ -577,7 +688,10 @@ fn normalize_test_url(candidate: &str) -> String {
     DEFAULT_DELAY_TEST_URL.to_string()
 }
 
-async fn resolve_delay_test_url(app_handle: &AppHandle, override_url: Option<String>) -> String {
+async fn resolve_delay_test_url<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    override_url: Option<String>,
+) -> String {
     if let Some(url) = override_url {
         return normalize_test_url(&url);
     }
@@ -588,7 +702,7 @@ async fn resolve_delay_test_url(app_handle: &AppHandle, override_url: Option<Str
     }
 }
 
-fn build_clash_delay_url(
+pub(crate) fn build_clash_delay_url(
     port: u16,
     proxy: &str,
     timeout_ms: u64,
@@ -644,7 +758,7 @@ async fn fetch_single_delay(
     Ok(delay)
 }
 
-fn median_u64(mut values: Vec<u64>) -> Option<u64> {
+pub(crate) fn median_u64(mut values: Vec<u64>) -> Option<u64> {
     if values.is_empty() {
         return None;
     }
@@ -652,7 +766,7 @@ fn median_u64(mut values: Vec<u64>) -> Option<u64> {
     Some(values[values.len() / 2])
 }
 
-async fn measure_proxy_delay(
+pub(crate) async fn measure_proxy_delay(
     port: u16,
     proxy: String,
     timeout_ms: u64,
@@ -693,8 +807,8 @@ async fn measure_proxy_delay(
 
 /// 测试多个节点延迟（批量/组测速统一入口）。
 #[tauri::command]
-pub async fn test_nodes_delay(
-    app_handle: AppHandle,
+pub async fn test_nodes_delay<R: Runtime>(
+    app_handle: AppHandle<R>,
     proxies: Vec<String>,
     options: Option<DelayTestOptions>,
     port: u16,
@@ -734,8 +848,8 @@ pub async fn test_nodes_delay(
 
 // 测试单个节点延迟（兼容旧接口名）
 #[tauri::command]
-pub async fn test_node_delay(
-    app_handle: AppHandle,
+pub async fn test_node_delay<R: Runtime>(
+    app_handle: AppHandle<R>,
     proxy: String,
     server: Option<String>,
     port: u16,
@@ -761,15 +875,17 @@ pub async fn test_node_delay(
 // 注入策略：读取 AppConfig.active_config_path 指向的文件，调用 inject_custom_rules，
 // 写回磁盘。若该文件是“用户原始订阅配置”（use_original_config），则跳过注入避免破坏。
 
-use crate::app::singbox::config_generator::inject_custom_rules;
 use crate::app::singbox::common::normalize_default_outbound;
+use crate::app::singbox::config_generator::{inject_custom_rules, strip_custom_rules};
 use crate::app::storage::custom_rule::{CustomRule, CustomRuleAction, CustomRuleMatchType, STORAGE_KEY};
 use crate::app::storage::enhanced_storage_service::get_enhanced_storage;
 use chrono::Utc;
 
 /// 读取所有自定义规则（按创建时间升序）。
 #[tauri::command]
-pub async fn list_custom_rules(app_handle: AppHandle) -> Result<Vec<CustomRule>, String> {
+pub async fn list_custom_rules<R: Runtime>(
+    app_handle: AppHandle<R>,
+) -> Result<Vec<CustomRule>, String> {
     let storage = get_enhanced_storage(&app_handle)
         .await
         .map_err(|e| format!("初始化存储失败: {}", e))?;
@@ -784,8 +900,8 @@ pub async fn list_custom_rules(app_handle: AppHandle) -> Result<Vec<CustomRule>,
 
 /// 新增一条自定义规则。payload/action/match_type 由前端传入。
 #[tauri::command]
-pub async fn add_custom_rule(
-    app_handle: AppHandle,
+pub async fn add_custom_rule<R: Runtime>(
+    app_handle: AppHandle<R>,
     match_type: CustomRuleMatchType,
     payload: String,
     action: CustomRuleAction,
@@ -826,8 +942,8 @@ pub async fn add_custom_rule(
 
 /// 更新一条规则（按 id 定位）。
 #[tauri::command]
-pub async fn update_custom_rule(
-    app_handle: AppHandle,
+pub async fn update_custom_rule<R: Runtime>(
+    app_handle: AppHandle<R>,
     id: String,
     match_type: CustomRuleMatchType,
     payload: String,
@@ -866,7 +982,10 @@ pub async fn update_custom_rule(
 
 /// 删除一条规则（按 id）。
 #[tauri::command]
-pub async fn delete_custom_rule(app_handle: AppHandle, id: String) -> Result<(), String> {
+pub async fn delete_custom_rule<R: Runtime>(
+    app_handle: AppHandle<R>,
+    id: String,
+) -> Result<(), String> {
     let storage = get_enhanced_storage(&app_handle)
         .await
         .map_err(|e| format!("初始化存储失败: {}", e))?;
@@ -890,7 +1009,10 @@ pub async fn delete_custom_rule(app_handle: AppHandle, id: String) -> Result<(),
 
 /// 切换规则启用/禁用（按 id）。
 #[tauri::command]
-pub async fn toggle_custom_rule(app_handle: AppHandle, id: String) -> Result<(), String> {
+pub async fn toggle_custom_rule<R: Runtime>(
+    app_handle: AppHandle<R>,
+    id: String,
+) -> Result<(), String> {
     let storage = get_enhanced_storage(&app_handle)
         .await
         .map_err(|e| format!("初始化存储失败: {}", e))?;
@@ -917,21 +1039,17 @@ pub async fn toggle_custom_rule(app_handle: AppHandle, id: String) -> Result<(),
 ///
 /// 实现要点：
 /// - 仅对“本程序生成的订阅配置”注入；用户原始订阅（use_original_config）跳过，避免破坏其结构。
-/// - 每次注入前重新读盘、覆盖式重写 route.rules 段是不安全的（默认规则由内核/生成器维护）；
-///   这里采用“先剔除旧的自定义规则标记，再重新注入”的策略——通过给自定义规则打上固定 tag 实现
-///   幂等。但为保持 MVP 简单且不侵入默认规则，我们改为：只在 write_default_config 生成路径注入，
-///   活动配置文件已存在时不重复注入（避免重复）。即：自定义规则改动后需要“重置为默认配置”或
-///   切换订阅才会生效——这通过提示用户“重启内核”来保证（ensure_singbox_config 在缺失时才重写）。
-///
-/// 折中方案：读取活动配置 → inject_custom_rules（该函数基于 rule_set/ip_cidr 定位插入，幂等性
-/// 由调用频率保证：每次 CRUD 后调用，但 inject 会累积）。为避免累积，这里先移除上次注入的规则。
-async fn inject_into_active_config(app_handle: &AppHandle) {
+/// - 先 [`strip_custom_rules`] 再 [`inject_custom_rules`]，按 per-rule marker 幂等重写。
+/// - 订阅重生 / 切换活动配置后应调用 [`inject_custom_rules_into_config_file`]，否则磁盘配置会丢规则。
+async fn inject_into_active_config<R: Runtime>(app_handle: &AppHandle<R>) {
     if let Err(e) = inject_into_active_config_inner(app_handle).await {
         warn!("自定义规则注入活动配置失败（不影响持久化）: {}", e);
     }
 }
 
-async fn inject_into_active_config_inner(app_handle: &AppHandle) -> Result<(), String> {
+async fn inject_into_active_config_inner<R: Runtime>(
+    app_handle: &AppHandle<R>,
+) -> Result<(), String> {
     let storage = get_enhanced_storage(app_handle)
         .await
         .map_err(|e| format!("初始化存储失败: {}", e))?;
@@ -942,7 +1060,7 @@ async fn inject_into_active_config_inner(app_handle: &AppHandle) -> Result<(), S
     .map_err(|e| format!("读取应用配置失败: {}", e))?;
 
     // 用户原始订阅配置：不注入，避免破坏其结构。
-    if is_active_config_use_original(&storage, &app_config).await {
+    if is_config_path_use_original(&storage, app_config.active_config_path.as_deref()).await {
         info!("当前活动订阅为原始配置，跳过自定义规则注入");
         return Ok(());
     }
@@ -951,6 +1069,35 @@ async fn inject_into_active_config_inner(app_handle: &AppHandle) -> Result<(), S
         Some(p) => std::path::PathBuf::from(p),
         None => return Ok(()),
     };
+    inject_custom_rules_into_config_file(app_handle, &config_path).await
+}
+
+/// 将持久化的自定义规则幂等写入指定配置文件。
+///
+/// 用于：CRUD 后写活动配置、订阅 materialize 后写目标配置、切换活动配置后补注。
+/// 调用方负责判断是否应跳过（例如 `use_original_config`）。
+pub async fn inject_custom_rules_into_config_file<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    config_path: &Path,
+) -> Result<(), String> {
+    let storage = get_enhanced_storage(app_handle)
+        .await
+        .map_err(|e| format!("初始化存储失败: {}", e))?;
+    let app_config = crate::app::storage::enhanced_storage_service::db_get_app_config(
+        app_handle.clone(),
+    )
+    .await
+    .map_err(|e| format!("读取应用配置失败: {}", e))?;
+    inject_custom_rules_into_config_file_with_storage(storage.as_ref(), &app_config, config_path)
+        .await
+}
+
+/// Hermetic 注入入口：不依赖 AppHandle，便于单测/E2E。
+pub async fn inject_custom_rules_into_config_file_with_storage(
+    storage: &crate::app::storage::enhanced_storage_service::EnhancedStorageService,
+    app_config: &crate::app::storage::state_model::AppConfig,
+    config_path: &Path,
+) -> Result<(), String> {
     if !config_path.exists() {
         return Ok(());
     }
@@ -961,33 +1108,38 @@ async fn inject_into_active_config_inner(app_handle: &AppHandle) -> Result<(), S
         .map_err(|e| format!("读取自定义规则失败: {}", e))?
         .unwrap_or_default();
 
-    let content = std::fs::read_to_string(&config_path)
+    let content = std::fs::read_to_string(config_path)
         .map_err(|e| format!("读取配置文件失败: {}", e))?;
-    let mut config: Value = serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {}", e))?;
+    let mut config: Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {}", e))?;
 
-    // 先剔除上一次注入的自定义规则（通过 comment 标记识别），保证幂等。
+    // 先剔除上一次注入的自定义规则（per-rule marker），保证幂等。
     strip_custom_rules(&mut config);
 
-    if !rules.is_empty() {
-        let default_outbound = normalize_default_outbound(&app_config);
-        inject_custom_rules(&mut config, &rules, default_outbound);
-        mark_custom_rules_extent(&mut config);
-    }
+    let default_outbound = normalize_default_outbound(app_config);
+    let injected = if rules.is_empty() {
+        0
+    } else {
+        inject_custom_rules(&mut config, &rules, default_outbound)
+    };
 
-    let updated = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("序列化配置失败: {}", e))?;
-    std::fs::write(&config_path, updated).map_err(|e| format!("写入配置失败: {}", e))?;
-    info!("已把 {} 条自定义规则注入活动配置: {:?}", rules.len(), config_path);
+    let updated =
+        serde_json::to_string_pretty(&config).map_err(|e| format!("序列化配置失败: {}", e))?;
+    std::fs::write(config_path, updated).map_err(|e| format!("写入配置失败: {}", e))?;
+    info!(
+        "已把 {} 条自定义规则注入配置: {:?}",
+        injected, config_path
+    );
     Ok(())
 }
 
-/// 判断当前活动订阅是否为“原始配置”（原始配置不注入）。
-async fn is_active_config_use_original(
+/// 判断给定配置路径对应的订阅是否为“原始配置”（原始配置不注入）。
+async fn is_config_path_use_original(
     storage: &std::sync::Arc<crate::app::storage::enhanced_storage_service::EnhancedStorageService>,
-    app_config: &crate::app::storage::state_model::AppConfig,
+    path: Option<&str>,
 ) -> bool {
-    let path = match &app_config.active_config_path {
-        Some(p) => p.clone(),
+    let path = match path {
+        Some(p) => p,
         None => return false,
     };
     let subscriptions = match storage.get_subscriptions().await {
@@ -996,73 +1148,11 @@ async fn is_active_config_use_original(
     };
     subscriptions
         .iter()
-        .any(|s| s.config_path.as_deref() == Some(&path) && s.use_original_config)
-}
-
-/// 自定义规则在 route.rules 中的起止标记（用对象里的固定 marker 字段标识）。
-const CUSTOM_RULE_START_MARKER: &str = "__custom_rule_start__";
-
-/// 给自定义规则段打上起始标记，便于下次 strip。
-fn mark_custom_rules_extent(config: &mut Value) {
-    if let Some(arr) = config
-        .get_mut("route")
-        .and_then(|r| r.get_mut("rules"))
-        .and_then(|rules| rules.as_array_mut())
-    {
-        if let Some(first) = arr.first_mut() {
-            if let Some(obj) = first.as_object_mut() {
-                obj.insert(CUSTOM_RULE_START_MARKER.to_string(), Value::Bool(true));
-            }
-        }
-    }
-}
-
-/// 移除上一次注入的自定义规则段（从起始标记到下一个默认规则之前）。
-fn strip_custom_rules(config: &mut Value) {
-    let arr = match config
-        .get_mut("route")
-        .and_then(|r| r.get_mut("rules"))
-        .and_then(|rules| rules.as_array_mut())
-    {
-        Some(a) => a,
-        None => return,
-    };
-    // 找到起始标记位置。
-    let start = arr.iter().position(|rule| {
-        rule.as_object()
-            .map(|o| o.contains_key(CUSTOM_RULE_START_MARKER))
-            .unwrap_or(false)
-    });
-    let start = match start {
-        Some(i) => i,
-        None => return,
-    };
-    // 自定义规则段 = 从 start（含）到下一条“内置规则”（含 rule_set/ip_cidr/domain 且不带 marker）之前。
-    // 内置规则的判定：有 rule_set/ip_cidr/domain/domain_suffix 字段。
-    let end = arr[start..]
-        .iter()
-        .skip(1) // 跳过起始标记那条
-        .position(|rule| {
-            let obj = match rule.as_object() {
-                Some(o) => o,
-                None => return false,
-            };
-            (obj.contains_key("rule_set")
-                || obj.contains_key("ip_cidr")
-                || obj.contains_key("domain")
-                || obj.contains_key("domain_suffix"))
-                && !obj.contains_key(CUSTOM_RULE_START_MARKER)
-        });
-    let remove_end = match end {
-        Some(rel) => start + 1 + rel, // 保留 start 那条（去掉 marker 后它通常也是自定义规则，见下）
-        None => arr.len(),
-    };
-    // 移除 [start, remove_end)
-    arr.drain(start..remove_end);
+        .any(|s| s.config_path.as_deref() == Some(path) && s.use_original_config)
 }
 
 /// 生成简单 uuid（不引入 uuid crate 依赖：用时间戳 + 进程 id 组合）。
-fn uuid_v4() -> String {
+pub(crate) fn uuid_v4() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1070,3 +1160,7 @@ fn uuid_v4() -> String {
         .unwrap_or(0);
     format!("{:016x}-{:08x}", nanos, std::process::id())
 }
+
+#[cfg(test)]
+#[path = "proxy_service.tests.rs"]
+mod tests;

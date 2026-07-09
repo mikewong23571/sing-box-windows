@@ -15,14 +15,14 @@ const SNAPSHOT_FORMAT_VERSION: u32 = 2;
 const SNAPSHOT_CONFIGS_DIR: &str = "configs";
 
 #[derive(Debug, Clone, Copy)]
-enum SnapshotPathKind {
+pub(crate) enum SnapshotPathKind {
     ActiveConfig,
     SubscriptionConfig,
     SubscriptionBackup,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct BackupSnapshot {
+pub(crate) struct BackupSnapshot {
     #[serde(default)]
     format_version: u32,
     #[serde(default)]
@@ -88,14 +88,14 @@ fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
-fn with_json_extension(mut path: PathBuf) -> PathBuf {
+pub(crate) fn with_json_extension(mut path: PathBuf) -> PathBuf {
     if path.extension().is_none() {
         path.set_extension("json");
     }
     path
 }
 
-fn resolve_export_path(file_path: Option<String>) -> Result<PathBuf, String> {
+pub(crate) fn resolve_export_path(file_path: Option<String>) -> Result<PathBuf, String> {
     if let Some(path) = file_path {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -113,7 +113,7 @@ fn resolve_export_path(file_path: Option<String>) -> Result<PathBuf, String> {
         .ok_or_else(|| "已取消导出备份".to_string())
 }
 
-fn resolve_import_path(file_path: Option<String>) -> Result<PathBuf, String> {
+pub(crate) fn resolve_import_path(file_path: Option<String>) -> Result<PathBuf, String> {
     if let Some(path) = file_path {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -128,15 +128,15 @@ fn resolve_import_path(file_path: Option<String>) -> Result<PathBuf, String> {
         .ok_or_else(|| "已取消导入备份".to_string())
 }
 
-fn default_active_config_path() -> PathBuf {
+pub(crate) fn default_active_config_path() -> PathBuf {
     paths::get_config_dir().join("config.json")
 }
 
-fn default_configs_dir() -> PathBuf {
+pub(crate) fn default_configs_dir() -> PathBuf {
     paths::get_config_dir().join(SNAPSHOT_CONFIGS_DIR)
 }
 
-fn sanitize_file_name(raw: &str, default_name: &str) -> String {
+pub(crate) fn sanitize_file_name(raw: &str, default_name: &str) -> String {
     let mut sanitized: String = raw
         .chars()
         .map(|c| {
@@ -155,7 +155,7 @@ fn sanitize_file_name(raw: &str, default_name: &str) -> String {
     sanitized
 }
 
-fn path_to_snapshot_string(path: &Path) -> String {
+pub(crate) fn path_to_snapshot_string(path: &Path) -> String {
     let mut segments = Vec::new();
     for component in path.components() {
         if let Component::Normal(seg) = component {
@@ -165,7 +165,7 @@ fn path_to_snapshot_string(path: &Path) -> String {
     segments.join("/")
 }
 
-fn normalize_relative_snapshot_path(path: &Path) -> Option<String> {
+pub(crate) fn normalize_relative_snapshot_path(path: &Path) -> Option<String> {
     let mut segments = Vec::new();
     for component in path.components() {
         match component {
@@ -182,7 +182,7 @@ fn normalize_relative_snapshot_path(path: &Path) -> Option<String> {
     }
 }
 
-fn snapshot_relative_to_path_buf(path: &str) -> PathBuf {
+pub(crate) fn snapshot_relative_to_path_buf(path: &str) -> PathBuf {
     let mut buf = PathBuf::new();
     for segment in path.split('/') {
         if !segment.is_empty() {
@@ -192,7 +192,7 @@ fn snapshot_relative_to_path_buf(path: &str) -> PathBuf {
     buf
 }
 
-fn relative_path_from_kind(path: &Path, kind: SnapshotPathKind) -> String {
+pub(crate) fn relative_path_from_kind(path: &Path, kind: SnapshotPathKind) -> String {
     let default_name = match kind {
         SnapshotPathKind::ActiveConfig => "config.json",
         SnapshotPathKind::SubscriptionConfig => "subscription.json",
@@ -218,7 +218,7 @@ fn relative_path_from_kind(path: &Path, kind: SnapshotPathKind) -> String {
     }
 }
 
-fn enforce_snapshot_relative_policy(path: &str, kind: SnapshotPathKind) -> String {
+pub(crate) fn enforce_snapshot_relative_policy(path: &str, kind: SnapshotPathKind) -> String {
     let trimmed = path.trim().replace('\\', "/");
     let candidate = PathBuf::from(trimmed);
     let normalized = normalize_relative_snapshot_path(&candidate);
@@ -243,7 +243,7 @@ fn enforce_snapshot_relative_policy(path: &str, kind: SnapshotPathKind) -> Strin
     }
 }
 
-fn encode_path_for_snapshot(raw_path: &str, kind: SnapshotPathKind) -> String {
+pub(crate) fn encode_path_for_snapshot(raw_path: &str, kind: SnapshotPathKind) -> String {
     let candidate = PathBuf::from(raw_path.trim());
     if candidate.is_absolute() {
         let root = paths::get_config_dir();
@@ -262,15 +262,15 @@ fn encode_path_for_snapshot(raw_path: &str, kind: SnapshotPathKind) -> String {
 }
 
 #[derive(Default)]
-struct PathRewriteStats {
-    absolute_rewrites: usize,
-    policy_rewrites: usize,
-    subscription_path_rewrites: usize,
-    backup_path_rewrites: usize,
-    active_path_rewritten: bool,
+pub(crate) struct PathRewriteStats {
+    pub(crate) absolute_rewrites: usize,
+    pub(crate) policy_rewrites: usize,
+    pub(crate) subscription_path_rewrites: usize,
+    pub(crate) backup_path_rewrites: usize,
+    pub(crate) active_path_rewritten: bool,
 }
 
-fn decode_snapshot_path_to_local(
+pub(crate) fn decode_snapshot_path_to_local(
     raw_path: &str,
     kind: SnapshotPathKind,
     stats: &mut PathRewriteStats,
@@ -336,7 +336,7 @@ fn decode_snapshot_path_to_local(
     local_path
 }
 
-fn rewrite_paths_for_snapshot(
+pub(crate) fn rewrite_paths_for_snapshot(
     snapshot: &BackupSnapshot,
 ) -> (AppConfig, Vec<Subscription>, PathRewriteStats) {
     let mut stats = PathRewriteStats::default();
@@ -381,7 +381,7 @@ fn rewrite_paths_for_snapshot(
     (app_config, subscriptions, stats)
 }
 
-fn rewrite_stats_warnings(stats: &PathRewriteStats, dry_run: bool) -> Vec<String> {
+pub(crate) fn rewrite_stats_warnings(stats: &PathRewriteStats, dry_run: bool) -> Vec<String> {
     let mut warnings = Vec::new();
 
     if stats.absolute_rewrites > 0 {
@@ -415,7 +415,7 @@ fn rewrite_stats_warnings(stats: &PathRewriteStats, dry_run: bool) -> Vec<String
     warnings
 }
 
-fn resolve_active_config_file_path(active_config_path: Option<&str>) -> PathBuf {
+pub(crate) fn resolve_active_config_file_path(active_config_path: Option<&str>) -> PathBuf {
     match active_config_path {
         Some(path) => {
             let candidate = PathBuf::from(path);
@@ -429,13 +429,15 @@ fn resolve_active_config_file_path(active_config_path: Option<&str>) -> PathBuf 
     }
 }
 
-fn write_config_content(path: &Path, content: &str) -> Result<(), String> {
+pub(crate) fn write_config_content(path: &Path, content: &str) -> Result<(), String> {
     ensure_parent_dir(path)?;
     std::fs::write(path, content).map_err(|e| format!("恢复活动配置文件失败: {}", e))
 }
 
-async fn build_snapshot(app: &tauri::AppHandle) -> Result<BackupSnapshot, String> {
-    let storage = get_enhanced_storage(app).await?;
+/// 从存储构造备份快照（无文件对话框；可单测）。
+pub(crate) async fn build_snapshot_from_storage(
+    storage: &crate::app::storage::enhanced_storage_service::EnhancedStorageService,
+) -> Result<BackupSnapshot, String> {
     let app_config = storage.get_app_config().await.map_err(|e| e.to_string())?;
     let theme_config = storage
         .get_theme_config()
@@ -499,7 +501,67 @@ async fn build_snapshot(app: &tauri::AppHandle) -> Result<BackupSnapshot, String
     })
 }
 
-fn parse_snapshot(content: &str) -> Result<BackupSnapshot, String> {
+async fn build_snapshot(app: &tauri::AppHandle) -> Result<BackupSnapshot, String> {
+    let storage = get_enhanced_storage(app).await?;
+    build_snapshot_from_storage(storage.as_ref()).await
+}
+
+/// 导入预检警告（纯逻辑，不写存储）。
+pub(crate) fn collect_import_precheck_warnings(
+    snapshot: &BackupSnapshot,
+    is_dry_run: bool,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if snapshot.format_version < SNAPSHOT_FORMAT_VERSION {
+        warnings.push(format!(
+            "检测到旧版备份格式 v{}，导入时将自动迁移路径",
+            snapshot.format_version
+        ));
+    }
+    if snapshot.created_at == 0 {
+        warnings.push("备份文件缺少 created_at，可能来自旧版本".to_string());
+    }
+    if snapshot.subscriptions.is_empty() {
+        warnings.push("备份中没有订阅记录".to_string());
+    }
+
+    if is_dry_run {
+        if snapshot.app_config.active_config_path.is_none() && snapshot.active_config_path.is_none()
+        {
+            warnings
+                .push("预检：备份中缺少 active_config_path，将回退为默认 config.json".to_string());
+        }
+        let (_, _, rewrite_stats) = rewrite_paths_for_snapshot(snapshot);
+        warnings.extend(rewrite_stats_warnings(&rewrite_stats, true));
+    }
+
+    warnings
+}
+
+/// 将快照序列化写入文件（无对话框）。
+pub(crate) fn write_snapshot_to_path(
+    snapshot: &BackupSnapshot,
+    target_path: &Path,
+) -> Result<BackupExportResult, String> {
+    ensure_parent_dir(target_path)?;
+    let serialized =
+        serde_json::to_string_pretty(snapshot).map_err(|e| format!("序列化备份失败: {}", e))?;
+    std::fs::write(target_path, serialized).map_err(|e| format!("写入备份文件失败: {}", e))?;
+    Ok(BackupExportResult {
+        file_path: target_path.to_string_lossy().to_string(),
+        created_at: snapshot.created_at,
+        subscriptions_count: snapshot.subscriptions.len(),
+    })
+}
+
+/// 从文件读取并解析快照（无对话框）。
+pub(crate) fn read_snapshot_from_path(source_path: &Path) -> Result<BackupSnapshot, String> {
+    let content =
+        std::fs::read_to_string(source_path).map_err(|e| format!("读取备份文件失败: {}", e))?;
+    parse_snapshot(&content)
+}
+
+pub(crate) fn parse_snapshot(content: &str) -> Result<BackupSnapshot, String> {
     let snapshot: BackupSnapshot =
         serde_json::from_str(content).map_err(|e| format!("解析备份文件失败: {}", e))?;
 
@@ -516,22 +578,22 @@ fn parse_snapshot(content: &str) -> Result<BackupSnapshot, String> {
     Ok(snapshot)
 }
 
-fn ensure_parent_dir(path: &Path) -> Result<(), String> {
+pub(crate) fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
     }
     Ok(())
 }
 
-async fn apply_snapshot(
-    app: &tauri::AppHandle,
+/// 将快照写入存储（无 AppHandle；不触发运行态同步）。
+pub(crate) async fn apply_snapshot_to_storage(
+    storage: &crate::app::storage::enhanced_storage_service::EnhancedStorageService,
     snapshot: &BackupSnapshot,
 ) -> Result<Vec<String>, String> {
     let mut warnings = Vec::new();
     if snapshot.app_config.active_config_path.is_none() && snapshot.active_config_path.is_none() {
         warnings.push("备份中缺少 active_config_path，已回退为默认 config.json".to_string());
     }
-    let storage = get_enhanced_storage(app).await?;
     let (mut app_config, rewritten_subscriptions, rewrite_stats) =
         rewrite_paths_for_snapshot(snapshot);
     warnings.extend(rewrite_stats_warnings(&rewrite_stats, false));
@@ -601,6 +663,16 @@ async fn apply_snapshot(
         .await
         .map_err(|e| format!("恢复激活订阅索引失败: {}", e))?;
 
+    Ok(warnings)
+}
+
+async fn apply_snapshot(
+    app: &tauri::AppHandle,
+    snapshot: &BackupSnapshot,
+) -> Result<Vec<String>, String> {
+    let storage = get_enhanced_storage(app).await?;
+    let warnings = apply_snapshot_to_storage(storage.as_ref(), snapshot).await?;
+
     // 恢复后按最新配置尝试同步运行态（不会强制重启内核）。
     let options = RuntimeApplyOptions::new("backup-restore");
     if let Err(error) = apply_runtime_change(app, RuntimeChange::AppConfigUpdated, options).await {
@@ -617,18 +689,9 @@ pub async fn backup_export_snapshot(
 ) -> Result<BackupExportResult, String> {
     let snapshot = build_snapshot(&app).await?;
     let target_path = resolve_export_path(file_path)?;
-
-    ensure_parent_dir(&target_path)?;
-    let serialized =
-        serde_json::to_string_pretty(&snapshot).map_err(|e| format!("序列化备份失败: {}", e))?;
-    std::fs::write(&target_path, serialized).map_err(|e| format!("写入备份文件失败: {}", e))?;
-
+    let result = write_snapshot_to_path(&snapshot, &target_path)?;
     info!("备份导出成功: {:?}", target_path);
-    Ok(BackupExportResult {
-        file_path: target_path.to_string_lossy().to_string(),
-        created_at: snapshot.created_at,
-        subscriptions_count: snapshot.subscriptions.len(),
-    })
+    Ok(result)
 }
 
 #[tauri::command]
@@ -638,33 +701,12 @@ pub async fn backup_import_snapshot(
     dry_run: Option<bool>,
 ) -> Result<BackupImportResult, String> {
     let source_path = resolve_import_path(file_path)?;
-    let content =
-        std::fs::read_to_string(&source_path).map_err(|e| format!("读取备份文件失败: {}", e))?;
-    let snapshot = parse_snapshot(&content)?;
+    let snapshot = read_snapshot_from_path(&source_path)?;
     let is_dry_run = dry_run.unwrap_or(false);
 
-    let mut warnings = Vec::new();
-    if snapshot.format_version < SNAPSHOT_FORMAT_VERSION {
-        warnings.push(format!(
-            "检测到旧版备份格式 v{}，导入时将自动迁移路径",
-            snapshot.format_version
-        ));
-    }
-    if snapshot.created_at == 0 {
-        warnings.push("备份文件缺少 created_at，可能来自旧版本".to_string());
-    }
-    if snapshot.subscriptions.is_empty() {
-        warnings.push("备份中没有订阅记录".to_string());
-    }
+    let mut warnings = collect_import_precheck_warnings(&snapshot, is_dry_run);
 
     if is_dry_run {
-        if snapshot.app_config.active_config_path.is_none() && snapshot.active_config_path.is_none()
-        {
-            warnings
-                .push("预检：备份中缺少 active_config_path，将回退为默认 config.json".to_string());
-        }
-        let (_, _, rewrite_stats) = rewrite_paths_for_snapshot(&snapshot);
-        warnings.extend(rewrite_stats_warnings(&rewrite_stats, true));
         return Ok(BackupImportResult {
             file_path: source_path.to_string_lossy().to_string(),
             valid: true,

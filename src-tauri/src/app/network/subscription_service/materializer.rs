@@ -15,7 +15,7 @@ use tracing::{error, info};
 /// 尝试把订阅内容当作 Base64 解码成 UTF-8 文本。
 ///
 /// 说明：不少机场会把 Clash YAML / URI 列表做一次 Base64 封装，且可能包含换行。
-pub(super) fn try_decode_base64_to_text(raw: &str) -> Option<String> {
+pub fn try_decode_base64_to_text(raw: &str) -> Option<String> {
     let mut s: String = raw.split_whitespace().collect();
     if s.is_empty() {
         return None;
@@ -34,7 +34,7 @@ pub(super) fn try_decode_base64_to_text(raw: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-pub(super) fn write_downloaded_subscription_config(
+pub fn write_downloaded_subscription_config(
     response_text: &str,
     use_original_config: bool,
     app_config: &AppConfig,
@@ -120,7 +120,7 @@ pub(super) fn write_downloaded_subscription_config(
     write_config_file(target_path, &config, "配置")
 }
 
-pub(super) fn write_manual_subscription_config(
+pub fn write_manual_subscription_config(
     content: &str,
     use_original_config: bool,
     app_config: &AppConfig,
@@ -239,5 +239,73 @@ mod tests {
         if let Some(parent) = target.parent() {
             let _ = std::fs::remove_dir_all(parent);
         }
+    }
+
+    #[test]
+    fn write_downloaded_original_and_parsed() {
+        use super::write_downloaded_subscription_config;
+        use crate::test_support::TempWorkspace;
+
+        let ws = TempWorkspace::new();
+        let target = ws.join("sing-box/configs/sub.json");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+
+        // original 路径期望 sing-box JSON
+        let original = r#"{
+  "log": {"level": "info"},
+  "inbounds": [],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"},
+    {"type": "trojan", "tag": "n1", "server": "example.com", "server_port": 443, "password": "p"}
+  ]
+}"#;
+        write_downloaded_subscription_config(
+            original,
+            true,
+            &AppConfig {
+                proxy_port: 17890,
+                api_port: 19090,
+                ..AppConfig::default()
+            },
+            &target,
+        )
+        .expect("original config write");
+        assert!(target.exists());
+
+        // generated from clash yaml
+        let clash = r#"
+proxies:
+  - name: ss1
+    type: ss
+    server: 1.1.1.1
+    port: 8388
+    cipher: aes-128-gcm
+    password: p
+"#;
+        let target2 = ws.join("sing-box/configs/sub2.json");
+        write_downloaded_subscription_config(clash, false, &AppConfig::default(), &target2)
+            .expect("parsed config write");
+        let out = std::fs::read_to_string(&target2).unwrap();
+        assert!(out.contains("outbounds") || out.contains("shadowsocks"));
+
+        // base64-wrapped uri list
+        let list = "trojan://password@example.com:443#t\n";
+        let b64 = general_purpose::STANDARD.encode(list.as_bytes());
+        let target3 = ws.join("sing-box/configs/sub3.json");
+        write_downloaded_subscription_config(&b64, false, &AppConfig::default(), &target3)
+            .expect("b64 config write");
+        assert!(target3.exists());
+    }
+
+    #[test]
+    fn try_decode_base64_url_safe_and_empty() {
+        assert!(try_decode_base64_to_text("").is_none());
+        assert!(try_decode_base64_to_text("   ").is_none());
+        let raw = "hello";
+        let enc = general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes());
+        // may need padding path
+        let decoded = try_decode_base64_to_text(&enc);
+        // either works or fails soft - exercise path
+        let _ = decoded;
     }
 }

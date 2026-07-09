@@ -4417,6 +4417,7 @@ name = "sing-box-windows"
 version = "2.3.1"
 dependencies = [
  "aes-gcm",
+ "async-trait",
  "base64 0.22.1",
  "chrono",
  "core-foundation 0.9.4",
@@ -4445,6 +4446,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-websocket",
  "tauri-plugin-window-state",
+ "tempfile",
  "thiserror 2.0.17",
  "tokio",
  "tokio-tungstenite",

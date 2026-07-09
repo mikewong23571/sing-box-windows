@@ -52,6 +52,25 @@ impl EnhancedStorageService {
         Ok(Self { database })
     }
 
+    /// 从已有 DatabaseService 构造（测试/E2E 用，无 AppHandle）。
+    pub fn from_database(database: Arc<DatabaseService>) -> Self {
+        Self { database }
+    }
+
+    /// 打开指定路径的 SQLite 文件（测试/E2E hermetic 存储）。
+    pub async fn from_path(database_path: &str) -> StorageResult<Self> {
+        if let Some(parent) = std::path::Path::new(database_path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let database = Arc::new(DatabaseService::new(database_path).await?);
+        Ok(Self { database })
+    }
+
+    /// 底层数据库访问（测试夹具）。
+    pub fn database(&self) -> &Arc<DatabaseService> {
+        &self.database
+    }
+
     // 应用配置
     pub async fn get_app_config(&self) -> StorageResult<AppConfig> {
         match self.database.load_app_config().await? {
@@ -202,7 +221,7 @@ fn resolve_startup_preferences_path<R: tauri::Runtime>(
     resolve_app_data_dir(app_handle).join(STARTUP_PREFERENCES_FILE)
 }
 
-fn build_startup_preferences(config: &AppConfig) -> StartupPreferences {
+pub(crate) fn build_startup_preferences(config: &AppConfig) -> StartupPreferences {
     StartupPreferences {
         auto_start_app: config.auto_start_app,
         auto_hide_to_tray_on_autostart: config.auto_hide_to_tray_on_autostart,
@@ -250,7 +269,7 @@ pub fn save_startup_preferences_sync<R: tauri::Runtime>(
 
 // Tauri 命令实现
 #[tauri::command]
-pub async fn db_get_app_config(app: AppHandle) -> Result<AppConfig, String> {
+pub async fn db_get_app_config<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<AppConfig, String> {
     db_get_app_config_internal(&app).await
 }
 
@@ -301,13 +320,18 @@ pub async fn db_save_app_config_internal<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-pub async fn db_get_theme_config(app: AppHandle) -> Result<ThemeConfig, String> {
+pub async fn db_get_theme_config<R: tauri::Runtime>(
+    app: AppHandle<R>,
+) -> Result<ThemeConfig, String> {
     let storage = get_enhanced_storage(&app).await?;
     storage.get_theme_config().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn db_save_theme_config(config: ThemeConfig, app: AppHandle) -> Result<(), String> {
+pub async fn db_save_theme_config<R: tauri::Runtime>(
+    config: ThemeConfig,
+    app: AppHandle<R>,
+) -> Result<(), String> {
     let storage = get_enhanced_storage(&app).await?;
     storage
         .save_theme_config(&config)
@@ -316,13 +340,18 @@ pub async fn db_save_theme_config(config: ThemeConfig, app: AppHandle) -> Result
 }
 
 #[tauri::command]
-pub async fn db_get_locale_config(app: AppHandle) -> Result<LocaleConfig, String> {
+pub async fn db_get_locale_config<R: tauri::Runtime>(
+    app: AppHandle<R>,
+) -> Result<LocaleConfig, String> {
     let storage = get_enhanced_storage(&app).await?;
     storage.get_locale_config().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn db_save_locale_config(config: LocaleConfig, app: AppHandle) -> Result<(), String> {
+pub async fn db_save_locale_config<R: tauri::Runtime>(
+    config: LocaleConfig,
+    app: AppHandle<R>,
+) -> Result<(), String> {
     let storage = get_enhanced_storage(&app).await?;
     storage
         .save_locale_config(&config)
@@ -331,13 +360,18 @@ pub async fn db_save_locale_config(config: LocaleConfig, app: AppHandle) -> Resu
 }
 
 #[tauri::command]
-pub async fn db_get_window_config(app: AppHandle) -> Result<WindowConfig, String> {
+pub async fn db_get_window_config<R: tauri::Runtime>(
+    app: AppHandle<R>,
+) -> Result<WindowConfig, String> {
     let storage = get_enhanced_storage(&app).await?;
     storage.get_window_config().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn db_save_window_config(config: WindowConfig, app: AppHandle) -> Result<(), String> {
+pub async fn db_save_window_config<R: tauri::Runtime>(
+    config: WindowConfig,
+    app: AppHandle<R>,
+) -> Result<(), String> {
     let storage = get_enhanced_storage(&app).await?;
     storage
         .save_window_config(&config)
@@ -346,13 +380,18 @@ pub async fn db_save_window_config(config: WindowConfig, app: AppHandle) -> Resu
 }
 
 #[tauri::command]
-pub async fn db_get_update_config(app: AppHandle) -> Result<UpdateConfig, String> {
+pub async fn db_get_update_config<R: tauri::Runtime>(
+    app: AppHandle<R>,
+) -> Result<UpdateConfig, String> {
     let storage = get_enhanced_storage(&app).await?;
     storage.get_update_config().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn db_save_update_config(config: UpdateConfig, app: AppHandle) -> Result<(), String> {
+pub async fn db_save_update_config<R: tauri::Runtime>(
+    config: UpdateConfig,
+    app: AppHandle<R>,
+) -> Result<(), String> {
     let storage = get_enhanced_storage(&app).await?;
     storage
         .save_update_config(&config)
@@ -361,15 +400,17 @@ pub async fn db_save_update_config(config: UpdateConfig, app: AppHandle) -> Resu
 }
 
 #[tauri::command]
-pub async fn db_get_subscriptions(app: AppHandle) -> Result<Vec<Subscription>, String> {
+pub async fn db_get_subscriptions<R: tauri::Runtime>(
+    app: AppHandle<R>,
+) -> Result<Vec<Subscription>, String> {
     let storage = get_enhanced_storage(&app).await?;
     storage.get_subscriptions().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn db_save_subscriptions(
+pub async fn db_save_subscriptions<R: tauri::Runtime>(
     subscriptions: Vec<Subscription>,
-    app: AppHandle,
+    app: AppHandle<R>,
 ) -> Result<(), String> {
     let storage = get_enhanced_storage(&app).await?;
     storage
@@ -379,7 +420,9 @@ pub async fn db_save_subscriptions(
 }
 
 #[tauri::command]
-pub async fn db_get_active_subscription_index(app: AppHandle) -> Result<Option<i64>, String> {
+pub async fn db_get_active_subscription_index<R: tauri::Runtime>(
+    app: AppHandle<R>,
+) -> Result<Option<i64>, String> {
     let storage = get_enhanced_storage(&app).await?;
     storage
         .get_active_subscription_index()
@@ -389,7 +432,11 @@ pub async fn db_get_active_subscription_index(app: AppHandle) -> Result<Option<i
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_app_config_for_persistence;
+    use super::*;
+    use crate::app::storage::state_model::{
+        LocaleConfig, Subscription, ThemeConfig, UpdateConfig, WindowConfig,
+    };
+    use crate::test_support::TempWorkspace;
 
     #[test]
     fn should_normalize_blank_tun_route_exclude_address_to_none() {
@@ -417,5 +464,109 @@ mod tests {
             "error should mention invalid CIDR, got: {}",
             error
         );
+    }
+
+    #[tokio::test]
+    async fn full_crud_roundtrip_all_config_types() {
+        let ws = TempWorkspace::new();
+        let db = ws.join("full.db");
+        let storage = EnhancedStorageService::from_path(db.to_str().unwrap())
+            .await
+            .unwrap();
+
+        let mut app = AppConfig::default();
+        app.proxy_port = 12345;
+        storage.save_app_config(&app).await.unwrap();
+        assert_eq!(storage.get_app_config().await.unwrap().proxy_port, 12345);
+
+        let theme = ThemeConfig {
+            is_dark: true,
+            ..ThemeConfig::default()
+        };
+        storage.save_theme_config(&theme).await.unwrap();
+        assert!(storage.get_theme_config().await.unwrap().is_dark);
+
+        let locale = LocaleConfig {
+            locale: "zh-CN".into(),
+        };
+        storage.save_locale_config(&locale).await.unwrap();
+        assert_eq!(storage.get_locale_config().await.unwrap().locale, "zh-CN");
+
+        let window = WindowConfig::default();
+        storage.save_window_config(&window).await.unwrap();
+        let _ = storage.get_window_config().await.unwrap();
+
+        let update = UpdateConfig::default();
+        storage.save_update_config(&update).await.unwrap();
+        let _ = storage.get_update_config().await.unwrap();
+
+        let subs = vec![Subscription {
+            name: "s".into(),
+            url: "https://x".into(),
+            is_loading: false,
+            last_update: None,
+            is_manual: false,
+            manual_content: None,
+            use_original_config: false,
+            config_path: Some("c.json".into()),
+            backup_path: None,
+            auto_update_interval_minutes: Some(60),
+            subscription_upload: None,
+            subscription_download: None,
+            subscription_total: None,
+            subscription_expire: None,
+            auto_update_fail_count: None,
+            last_auto_update_attempt: None,
+            last_auto_update_error: None,
+            last_auto_update_error_type: None,
+            last_auto_update_backoff_until: None,
+        }];
+        storage.save_subscriptions(&subs).await.unwrap();
+        assert_eq!(storage.get_subscriptions().await.unwrap().len(), 1);
+
+        storage
+            .save_active_subscription_index(Some(0))
+            .await
+            .unwrap();
+        assert_eq!(
+            storage.get_active_subscription_index().await.unwrap(),
+            Some(0)
+        );
+        storage.save_active_subscription_index(None).await.unwrap();
+        assert_eq!(
+            storage.get_active_subscription_index().await.unwrap(),
+            None
+        );
+
+        storage.save_config("k", &"v".to_string()).await.unwrap();
+        let v: Option<String> = storage.get_config("k").await.unwrap();
+        assert_eq!(v.as_deref(), Some("v"));
+        storage.remove_config("k").await.unwrap();
+        let v2: Option<String> = storage.get_config("k").await.unwrap();
+        assert!(v2.is_none());
+
+        storage
+            .save_generic_config("g", &vec![1u32, 2])
+            .await
+            .unwrap();
+        let g: Option<Vec<u32>> = storage.load_generic_config("g").await.unwrap();
+        assert_eq!(g, Some(vec![1, 2]));
+
+        let _ = storage.database();
+        let _ = EnhancedStorageService::from_database(storage.database().clone());
+    }
+
+    #[test]
+    fn build_startup_preferences_from_app_config() {
+        let cfg = AppConfig {
+            auto_start_app: true,
+            auto_hide_to_tray_on_autostart: true,
+            tray_close_behavior: "lightweight".into(),
+            ..AppConfig::default()
+        };
+        let prefs = build_startup_preferences(&cfg);
+        assert!(prefs.auto_start_app);
+        assert!(prefs.auto_hide_to_tray_on_autostart);
+        assert_eq!(prefs.tray_close_behavior, "lightweight");
     }
 }

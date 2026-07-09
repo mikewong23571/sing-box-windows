@@ -2,15 +2,15 @@ use crate::app::runtime::change::{RuntimeApplyOptions, RuntimeChange};
 use crate::app::runtime::orchestrator::apply_runtime_change;
 use crate::app::storage::enhanced_storage_service::get_enhanced_storage;
 use crate::app::storage::state_model::{AppConfig, Subscription};
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConfigPatchMode {
+pub enum ConfigPatchMode {
     Full,
     PortsOnly,
 }
 
-pub(crate) fn resolve_patch_mode_for_subscription(
+pub fn resolve_patch_mode_for_subscription(
     subscription: Option<&Subscription>,
 ) -> ConfigPatchMode {
     match subscription {
@@ -19,7 +19,7 @@ pub(crate) fn resolve_patch_mode_for_subscription(
     }
 }
 
-pub(crate) fn resolve_patch_mode_with_hint(
+pub fn resolve_patch_mode_with_hint(
     subscription: Option<&Subscription>,
     use_original_config_hint: Option<bool>,
 ) -> ConfigPatchMode {
@@ -31,7 +31,7 @@ pub(crate) fn resolve_patch_mode_with_hint(
     }
 }
 
-pub(crate) fn sync_settings_to_config_file(
+pub fn sync_settings_to_config_file(
     config_path: &std::path::Path,
     app_config: &AppConfig,
     patch_mode: ConfigPatchMode,
@@ -58,8 +58,8 @@ pub(crate) fn sync_settings_to_config_file(
     Ok(())
 }
 
-async fn resolve_patch_mode_for_active_config(
-    app: &AppHandle,
+async fn resolve_patch_mode_for_active_config<R: Runtime>(
+    app: &AppHandle<R>,
     active_config_path: &str,
     use_original_config_hint: Option<bool>,
 ) -> ConfigPatchMode {
@@ -88,8 +88,8 @@ async fn resolve_patch_mode_for_active_config(
     }
 }
 
-pub(crate) async fn sync_active_config_settings(
-    app: &AppHandle,
+pub(crate) async fn sync_active_config_settings<R: Runtime>(
+    app: &AppHandle<R>,
     effective_config: &AppConfig,
     use_original_config_hint: Option<bool>,
 ) {
@@ -107,8 +107,8 @@ pub(crate) async fn sync_active_config_settings(
     }
 }
 
-pub async fn apply_runtime_config_update(
-    app: &AppHandle,
+pub async fn apply_runtime_config_update<R: Runtime>(
+    app: &AppHandle<R>,
     _effective_config: &AppConfig,
     use_original_config_hint: Option<bool>,
     force_restart: bool,
@@ -127,9 +127,13 @@ pub async fn apply_runtime_config_update(
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_patch_mode_for_subscription, resolve_patch_mode_with_hint, ConfigPatchMode,
+        apply_runtime_config_update, resolve_patch_mode_for_subscription,
+        resolve_patch_mode_with_hint, sync_active_config_settings, sync_settings_to_config_file,
+        ConfigPatchMode,
     };
-    use crate::app::storage::state_model::Subscription;
+    use crate::app::storage::state_model::{AppConfig, Subscription};
+    use crate::test_support::MockAppEnv;
+    use std::fs;
 
     fn build_subscription(use_original_config: bool) -> Subscription {
         Subscription {
@@ -179,5 +183,82 @@ mod tests {
             resolve_patch_mode_with_hint(Some(&subscription), Some(false)),
             ConfigPatchMode::Full
         );
+    }
+
+    #[test]
+    fn sync_settings_to_config_file_full_and_ports_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cfg.json");
+        fs::write(
+            &path,
+            r#"{"log":{"level":"info"},"inbounds":[{"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":7890}],"outbounds":[{"type":"direct","tag":"direct"}]}"#,
+        )
+        .unwrap();
+        let mut cfg = AppConfig::default();
+        cfg.proxy_port = 17990;
+        cfg.api_port = 17991;
+        sync_settings_to_config_file(&path, &cfg, ConfigPatchMode::PortsOnly).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("17990") || content.contains("mixed"));
+        sync_settings_to_config_file(&path, &cfg, ConfigPatchMode::Full).unwrap();
+        assert!(path.exists());
+        // 缺失文件
+        assert!(sync_settings_to_config_file(
+            &dir.path().join("missing.json"),
+            &cfg,
+            ConfigPatchMode::Full
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn sync_active_config_settings_with_hint_and_subscription() {
+        let env = MockAppEnv::new();
+        let cfg_path = env.workspace.path().join("sing-box/active.json");
+        fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        fs::write(
+            &cfg_path,
+            r#"{"log":{"level":"info"},"inbounds":[],"outbounds":[{"type":"direct","tag":"direct"}]}"#,
+        )
+        .unwrap();
+        let db = env.workspace.path().join("cfg_update.db");
+        let storage = env.install_storage_from_path(db.to_str().unwrap()).await;
+        let mut app_cfg = AppConfig::default();
+        app_cfg.active_config_path = Some(cfg_path.to_string_lossy().to_string());
+        app_cfg.proxy_port = 18001;
+        storage.save_app_config(&app_cfg).await.unwrap();
+
+        let mut sub = build_subscription(true);
+        sub.config_path = Some(cfg_path.to_string_lossy().to_string());
+        storage.save_subscriptions(&[sub]).await.unwrap();
+
+        let h = env.handle();
+        // 显式 hint
+        sync_active_config_settings(&h, &app_cfg, Some(true)).await;
+        // 无 hint：从订阅解析 PortsOnly
+        sync_active_config_settings(&h, &app_cfg, None).await;
+        // 无活动路径：no-op
+        let empty = AppConfig::default();
+        sync_active_config_settings(&h, &empty, None).await;
+    }
+
+    #[tokio::test]
+    async fn apply_runtime_config_update_with_mock_app() {
+        let env = MockAppEnv::new();
+        let cfg_path = env.workspace.path().join("sing-box/c.json");
+        fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        fs::write(
+            &cfg_path,
+            r#"{"log":{"level":"info"},"inbounds":[],"outbounds":[{"type":"direct","tag":"direct"}]}"#,
+        )
+        .unwrap();
+        let db = env.workspace.path().join("cfg_update2.db");
+        let storage = env.install_storage_from_path(db.to_str().unwrap()).await;
+        let mut app_cfg = AppConfig::default();
+        app_cfg.active_config_path = Some(cfg_path.to_string_lossy().to_string());
+        storage.save_app_config(&app_cfg).await.unwrap();
+
+        apply_runtime_config_update(&env.handle(), &app_cfg, Some(false), false, "test-update")
+            .await;
     }
 }

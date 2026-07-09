@@ -1,8 +1,8 @@
 use crate::app::constants::paths;
-use crate::app::core::kernel_service::runtime::stop_kernel;
-use crate::app::core::kernel_service::status::is_kernel_running;
+use crate::app::core::kernel_service::runtime::stop_kernel_with_process;
+use crate::app::core::kernel_service::status::{is_kernel_running, is_kernel_running_with_process};
 use crate::app::core::kernel_service::versioning::extract_clean_version;
-use crate::app::core::kernel_service::PROCESS_MANAGER;
+use crate::app::core::kernel_service::KernelProcessControl;
 use crate::app::runtime::change::{RuntimeApplyOptions, RuntimeChange};
 use crate::app::runtime::orchestrator::apply_runtime_change;
 use crate::app::storage::enhanced_storage_service::{
@@ -11,7 +11,7 @@ use crate::app::storage::enhanced_storage_service::{
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 use tokio::process::Command;
 use tracing::{info, warn};
 
@@ -37,16 +37,13 @@ pub fn pick_kernel_import_file() -> Result<Option<String>, String> {
 /// 支持：
 /// - Windows: `sing-box.exe` / `.zip`
 /// - Linux/macOS: `sing-box` / `.tar.gz` / `.tgz` / `.zip` / `.tar`
-#[tauri::command]
-pub async fn import_kernel_executable(
-    app_handle: AppHandle,
-    file_path: String,
-) -> Result<KernelImportResult, String> {
+///
+/// 校验导入路径（纯逻辑 + 存在性，无 AppHandle）。
+pub(crate) fn validate_import_source_path(file_path: &str) -> Result<PathBuf, String> {
     let raw_path = file_path.trim();
     if raw_path.is_empty() {
         return Err("请选择要导入的内核文件".to_string());
     }
-
     let selected_path = PathBuf::from(raw_path);
     if !selected_path.exists() {
         return Err(format!("文件不存在: {}", selected_path.to_string_lossy()));
@@ -54,6 +51,28 @@ pub async fn import_kernel_executable(
     if !selected_path.is_file() {
         return Err("请选择文件而不是目录".to_string());
     }
+    Ok(selected_path)
+}
+
+/// 构建导入结果消息（纯逻辑）。
+pub(crate) fn build_import_success_message(version: &str, restarted: bool) -> String {
+    format!(
+        "内核导入成功，版本 {}{}",
+        version,
+        if restarted {
+            "，已自动重启内核"
+        } else {
+            ""
+        }
+    )
+}
+
+#[tauri::command]
+pub async fn import_kernel_executable(
+    app_handle: AppHandle,
+    file_path: String,
+) -> Result<KernelImportResult, String> {
+    let selected_path = validate_import_source_path(&file_path)?;
 
     let kernel_dir = paths::get_config_dir();
     tokio::fs::create_dir_all(&kernel_dir)
@@ -74,8 +93,9 @@ pub async fn import_kernel_executable(
     result
 }
 
-async fn import_kernel_executable_inner(
-    app_handle: &AppHandle,
+/// 导入内核核心流程（泛型 Runtime，MockAppEnv 可测）。
+pub(crate) async fn import_kernel_executable_inner<R: Runtime>(
+    app_handle: &AppHandle<R>,
     selected_path: &Path,
     temp_dir: &Path,
 ) -> Result<KernelImportResult, String> {
@@ -132,26 +152,18 @@ async fn import_kernel_executable_inner(
         imported_version: imported_version.clone(),
         restarted,
         backup_path,
-        message: format!(
-            "内核导入成功，版本 {}{}",
-            imported_version,
-            if restarted {
-                "，已自动重启内核"
-            } else {
-                ""
-            }
-        ),
+        message: build_import_success_message(&imported_version, restarted),
     })
 }
 
-fn now_timestamp_secs() -> u64 {
+pub(crate) fn now_timestamp_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_secs(0))
         .as_secs()
 }
 
-fn kernel_executable_name() -> &'static str {
+pub(crate) fn kernel_executable_name() -> &'static str {
     if cfg!(target_os = "windows") {
         "sing-box.exe"
     } else {
@@ -159,7 +171,7 @@ fn kernel_executable_name() -> &'static str {
     }
 }
 
-fn is_archive_file(path: &Path) -> bool {
+pub(crate) fn is_archive_file(path: &Path) -> bool {
     let lower = path.to_string_lossy().to_ascii_lowercase();
     lower.ends_with(".zip")
         || lower.ends_with(".tar.gz")
@@ -167,7 +179,8 @@ fn is_archive_file(path: &Path) -> bool {
         || lower.ends_with(".tar")
 }
 
-async fn resolve_kernel_binary_source(
+/// 从用户选择的文件解析内核二进制路径（支持压缩包解压）。
+pub(crate) async fn resolve_kernel_binary_source(
     selected_path: &Path,
     temp_dir: &Path,
 ) -> Result<PathBuf, String> {
@@ -181,7 +194,8 @@ async fn resolve_kernel_binary_source(
     find_executable_file(&extract_dir, kernel_executable_name())
 }
 
-async fn stage_kernel_binary(
+/// 将源二进制复制到临时目录并设置可执行权限。
+pub(crate) async fn stage_kernel_binary(
     source_binary_path: &Path,
     temp_dir: &Path,
 ) -> Result<PathBuf, String> {
@@ -193,7 +207,8 @@ async fn stage_kernel_binary(
     Ok(staged_path)
 }
 
-async fn validate_kernel_binary(binary_path: &Path) -> Result<String, String> {
+/// 执行 `version` 校验并解析版本号（hermetic，无 AppHandle）。
+pub(crate) async fn validate_kernel_binary(binary_path: &Path) -> Result<String, String> {
     let mut cmd = Command::new(binary_path);
     cmd.arg("version");
 
@@ -232,12 +247,16 @@ async fn validate_kernel_binary(binary_path: &Path) -> Result<String, String> {
     Ok(version)
 }
 
-async fn stop_running_kernel_for_replace(app_handle: &AppHandle) -> Result<(), String> {
+/// 停止运行中的内核以便导入替换（process 可注入）。
+pub(crate) async fn stop_running_kernel_for_replace_with_process<R: Runtime>(
+    process: &dyn KernelProcessControl<R>,
+    app_handle: &AppHandle<R>,
+) -> Result<(), String> {
     info!("检测到内核正在运行，准备停止以执行手动导入替换");
 
     for attempt in 1..=5 {
-        let _ = stop_kernel(Some(app_handle)).await;
-        if !is_kernel_running().await.unwrap_or(true) {
+        let _ = stop_kernel_with_process(process, Some(app_handle)).await;
+        if !is_kernel_running_with_process(process).await.unwrap_or(true) {
             info!("内核已停止，可继续替换");
             return Ok(());
         }
@@ -246,20 +265,31 @@ async fn stop_running_kernel_for_replace(app_handle: &AppHandle) -> Result<(), S
     }
 
     warn!("常规停止失败，尝试强制终止残留进程");
-    PROCESS_MANAGER
+    process
         .kill_existing_processes(Some(app_handle))
         .await
         .map_err(|e| format!("强制终止内核进程失败: {}", e))?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
-    if is_kernel_running().await.unwrap_or(false) {
+    if is_kernel_running_with_process(process).await.unwrap_or(false) {
         return Err("无法停止当前内核进程，已中止导入".to_string());
     }
 
     Ok(())
 }
 
-async fn replace_installed_kernel(
+pub(crate) async fn stop_running_kernel_for_replace<R: Runtime>(
+    app_handle: &AppHandle<R>,
+) -> Result<(), String> {
+    stop_running_kernel_for_replace_with_process(
+        &**crate::app::core::kernel_service::PROCESS_MANAGER,
+        app_handle,
+    )
+    .await
+}
+
+/// 备份并替换已安装内核（hermetic FS 操作）。
+pub(crate) async fn replace_installed_kernel(
     staged_binary_path: &Path,
     kernel_path: &Path,
 ) -> Result<Option<String>, String> {
@@ -294,7 +324,7 @@ async fn replace_installed_kernel(
     Ok(backup_path.map(|p| p.to_string_lossy().to_string()))
 }
 
-fn build_backup_path(kernel_path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn build_backup_path(kernel_path: &Path) -> Result<PathBuf, String> {
     let file_name = kernel_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -305,7 +335,8 @@ fn build_backup_path(kernel_path: &Path) -> Result<PathBuf, String> {
     Ok(parent.join(format!("{}.bak-import-{}", file_name, now_timestamp_secs())))
 }
 
-async fn move_file_with_fallback(from: &Path, to: &Path) -> Result<(), String> {
+/// rename 失败时回退到 copy + remove。
+pub(crate) async fn move_file_with_fallback(from: &Path, to: &Path) -> Result<(), String> {
     match tokio::fs::rename(from, to).await {
         Ok(_) => Ok(()),
         Err(_) => {
@@ -320,7 +351,8 @@ async fn move_file_with_fallback(from: &Path, to: &Path) -> Result<(), String> {
     }
 }
 
-async fn restore_kernel_from_backup(kernel_path: &Path, backup_path: &Path) -> Result<(), String> {
+/// 从备份恢复内核文件。
+pub(crate) async fn restore_kernel_from_backup(kernel_path: &Path, backup_path: &Path) -> Result<(), String> {
     if !backup_path.exists() {
         return Err("回滚失败：未找到备份内核".to_string());
     }
@@ -334,7 +366,8 @@ async fn restore_kernel_from_backup(kernel_path: &Path, backup_path: &Path) -> R
     move_file_with_fallback(backup_path, kernel_path).await
 }
 
-async fn wait_kernel_running(timeout: Duration) -> bool {
+/// 在超时内轮询内核是否运行（依赖全局进程状态探测）。
+pub(crate) async fn wait_kernel_running(timeout: Duration) -> bool {
     let start = tokio::time::Instant::now();
     while start.elapsed() < timeout {
         if is_kernel_running().await.unwrap_or(false) {
@@ -345,7 +378,7 @@ async fn wait_kernel_running(timeout: Duration) -> bool {
     false
 }
 
-fn extract_archive(archive_path: &Path, extract_to: &Path) -> Result<(), String> {
+pub(crate) fn extract_archive(archive_path: &Path, extract_to: &Path) -> Result<(), String> {
     let lower = archive_path.to_string_lossy().to_ascii_lowercase();
     if lower.ends_with(".zip") {
         extract_zip_archive(archive_path, extract_to)?;
@@ -360,7 +393,7 @@ fn extract_archive(archive_path: &Path, extract_to: &Path) -> Result<(), String>
     Ok(())
 }
 
-fn extract_zip_archive(archive_path: &Path, extract_to: &Path) -> Result<(), String> {
+pub(crate) fn extract_zip_archive(archive_path: &Path, extract_to: &Path) -> Result<(), String> {
     use zip::ZipArchive;
 
     let file = std::fs::File::open(archive_path).map_err(|e| format!("打开 ZIP 失败: {}", e))?;
@@ -388,7 +421,7 @@ fn extract_zip_archive(archive_path: &Path, extract_to: &Path) -> Result<(), Str
     Ok(())
 }
 
-fn extract_tar_gz_archive(archive_path: &Path, extract_to: &Path) -> Result<(), String> {
+pub(crate) fn extract_tar_gz_archive(archive_path: &Path, extract_to: &Path) -> Result<(), String> {
     use flate2::read::GzDecoder;
     use tar::Archive;
 
@@ -400,7 +433,7 @@ fn extract_tar_gz_archive(archive_path: &Path, extract_to: &Path) -> Result<(), 
         .map_err(|e| format!("解压 tar.gz 失败: {}", e))
 }
 
-fn extract_tar_archive(archive_path: &Path, extract_to: &Path) -> Result<(), String> {
+pub(crate) fn extract_tar_archive(archive_path: &Path, extract_to: &Path) -> Result<(), String> {
     use tar::Archive;
 
     let file = std::fs::File::open(archive_path).map_err(|e| format!("打开 tar 失败: {}", e))?;
@@ -410,7 +443,7 @@ fn extract_tar_archive(archive_path: &Path, extract_to: &Path) -> Result<(), Str
         .map_err(|e| format!("解压 tar 失败: {}", e))
 }
 
-fn find_executable_file(search_dir: &Path, executable_name: &str) -> Result<PathBuf, String> {
+pub(crate) fn find_executable_file(search_dir: &Path, executable_name: &str) -> Result<PathBuf, String> {
     let direct_path = search_dir.join(executable_name);
     if direct_path.exists() && direct_path.is_file() {
         return Ok(direct_path);
@@ -436,7 +469,7 @@ fn find_executable_file(search_dir: &Path, executable_name: &str) -> Result<Path
 }
 
 #[cfg(unix)]
-fn set_executable_permission(file_path: &Path) -> Result<(), String> {
+pub(crate) fn set_executable_permission(file_path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let mut perms = std::fs::metadata(file_path)
@@ -447,6 +480,11 @@ fn set_executable_permission(file_path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
-fn set_executable_permission(_file_path: &Path) -> Result<(), String> {
+pub(crate) fn set_executable_permission(_file_path: &Path) -> Result<(), String> {
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "import.tests.rs"]
+mod tests;
+

@@ -4,7 +4,7 @@ use crate::app::core::event_relay::{
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
@@ -16,8 +16,8 @@ lazy_static::lazy_static! {
         Arc::new(AtomicBool::new(false));
 }
 
-pub(super) async fn start_websocket_relay(
-    app_handle: AppHandle,
+pub(super) async fn start_websocket_relay<R: Runtime>(
+    app_handle: AppHandle<R>,
     api_port: Option<u16>,
 ) -> Result<(), String> {
     let port = api_port.ok_or("API端口参数是必需的，请从前端传递正确的端口配置")?;
@@ -91,4 +91,31 @@ pub(super) async fn cleanup_event_relay_tasks() {
     }
 
     info!("已清理所有事件中继任务");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::MockAppEnv;
+
+    #[tokio::test]
+    async fn start_websocket_relay_requires_port() {
+        let env = MockAppEnv::new();
+        let err = start_websocket_relay(env.handle(), None).await.unwrap_err();
+        assert!(err.contains("API端口"));
+    }
+
+    #[tokio::test]
+    async fn start_websocket_relay_spawns_and_cleanup() {
+        let env = MockAppEnv::new();
+        // 无真实 WS 服务：中继任务会重试；启动函数本身在 emit 后返回 Ok
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            start_websocket_relay(env.handle(), Some(1)),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_ok());
+        cleanup_event_relay_tasks().await;
+    }
 }

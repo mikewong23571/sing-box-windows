@@ -77,3 +77,59 @@ impl Default for ProcessConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_error_display_covers_all_variants() {
+        let cases: Vec<(ProcessError, &str)> = vec![
+            (ProcessError::AlreadyRunning, "已在运行"),
+            (ProcessError::NotRunning, "未运行"),
+            (ProcessError::StartFailed("s".into()), "启动失败"),
+            (ProcessError::StopFailed("s".into()), "停止失败"),
+            (ProcessError::StatusCheckFailed("s".into()), "状态检查"),
+            (ProcessError::ConfigError("s".into()), "配置错误"),
+            (ProcessError::SystemError("s".into()), "系统错误"),
+            (ProcessError::PermissionError("s".into()), "权限错误"),
+            (ProcessError::NetworkError("s".into()), "网络错误"),
+            (ProcessError::Unknown("s".into()), "未知错误"),
+            (ProcessError::Other("s".into()), "其他错误"),
+        ];
+        for (err, needle) in cases {
+            let s = err.to_string();
+            assert!(s.contains(needle), "display={s} needle={needle}");
+        }
+        // From io::Error
+        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "io-x");
+        let pe: ProcessError = io_err.into();
+        assert!(matches!(pe, ProcessError::SystemError(_)));
+        assert!(pe.to_string().contains("io-x"));
+    }
+
+    #[test]
+    fn process_status_and_config_defaults() {
+        let _ = ProcessStatus::Starting;
+        let _ = ProcessStatus::Running;
+        let _ = ProcessStatus::Stopping;
+        let _ = ProcessStatus::Stopped;
+        let failed = ProcessStatus::Failed("x".into());
+        assert_eq!(failed, ProcessStatus::Failed("x".into()));
+        assert_ne!(failed, ProcessStatus::Running);
+
+        let cfg = ProcessConfig::default();
+        assert!(cfg.graceful_timeout > 0);
+        assert!(cfg.health_check_interval > 0);
+        assert!(cfg.max_restart_attempts > 0);
+        assert!(cfg.restart_delay > 0);
+
+        // Serialize/deserialize roundtrip
+        let json = serde_json::to_string(&ProcessStatus::Running).unwrap();
+        let back: ProcessStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ProcessStatus::Running);
+        let cfg_json = serde_json::to_string(&cfg).unwrap();
+        let cfg2: ProcessConfig = serde_json::from_str(&cfg_json).unwrap();
+        assert_eq!(cfg2.graceful_timeout, cfg.graceful_timeout);
+    }
+}

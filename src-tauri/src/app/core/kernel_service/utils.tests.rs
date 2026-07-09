@@ -75,3 +75,12 @@ fn test_build_kernel_error_payload_should_include_structured_api_http_error_diag
     assert_eq!(payload["startup_diagnosis"]["stage"], "readiness");
     assert_eq!(payload["startup_diagnosis"]["http_status"], 400);
 }
+
+#[test]
+fn vec_sink_records_kernel_events() {
+    let sink = VecSink::default();
+    emit_kernel_starting_with_sink(&sink, "manual", 9090, 7890);
+    let events = sink.events.lock().unwrap();
+    assert!(events.iter().any(|(name, _)| name == "kernel-starting"));
+    assert!(events.iter().any(|(name, _)| name == "kernel-status-changed"));
+}

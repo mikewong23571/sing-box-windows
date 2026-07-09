@@ -70,7 +70,7 @@ pub fn spawn_log_cleanup_task(log_dir: PathBuf) -> JoinHandle<()> {
     })
 }
 
-fn build_env_filter() -> EnvFilter {
+pub(crate) fn build_env_filter() -> EnvFilter {
     EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         // 缺省时启用调试日志，兼顾 sing-box 与 tauri
         // 关闭或降级部分第三方库日志，避免噪音（如 sqlx）
@@ -82,14 +82,16 @@ fn build_env_filter() -> EnvFilter {
     })
 }
 
-fn prepare_log_dir() -> io::Result<PathBuf> {
+pub(crate) fn prepare_log_dir() -> io::Result<PathBuf> {
     let base = PathBuf::from(get_work_dir_sync());
     let log_dir = base.join(log_constants::DEFAULT_DIR);
     std::fs::create_dir_all(&log_dir)?;
     Ok(log_dir)
 }
 
-fn create_file_writer(log_dir: &Path) -> io::Result<(non_blocking::NonBlocking, WorkerGuard)> {
+pub(crate) fn create_file_writer(
+    log_dir: &Path,
+) -> io::Result<(non_blocking::NonBlocking, WorkerGuard)> {
     let file_name = format!("{}.log", log_constants::DEFAULT_FILE_PREFIX);
 
     // 只支持 hourly/daily/never，其他值回退为 daily，避免新增枚举导致非穷尽匹配
@@ -112,14 +114,14 @@ fn init_console_only(env_filter: EnvFilter) {
         .try_init();
 }
 
-async fn cleanup_once(log_dir: PathBuf) -> Result<(), String> {
+pub(crate) async fn cleanup_once(log_dir: PathBuf) -> Result<(), String> {
     tokio::task::spawn_blocking(move || perform_cleanup(&log_dir))
         .await
         .map_err(|e| format!("清理任务 Join 失败: {e}"))?
         .map_err(|e| format!("清理日志出错: {e}"))
 }
 
-fn perform_cleanup(log_dir: &Path) -> io::Result<()> {
+pub(crate) fn perform_cleanup(log_dir: &Path) -> io::Result<()> {
     if !log_dir.exists() {
         return Ok(());
     }
@@ -171,3 +173,8 @@ fn perform_cleanup(log_dir: &Path) -> io::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "log_util.tests.rs"]
+mod tests;
+

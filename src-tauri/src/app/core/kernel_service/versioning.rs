@@ -3,10 +3,56 @@ use crate::app::storage::enhanced_storage_service::db_get_app_config;
 use serde::Deserialize;
 use serde_json;
 use std::process::Command;
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 use tracing::{info, warn};
 
-pub(super) async fn get_latest_kernel_version(
+/// 默认 latest 版本 API 镜像列表（生产路径）。
+pub(crate) fn default_latest_version_api_urls() -> &'static [&'static str] {
+    &[
+        "https://api.github.com/repos/SagerNet/sing-box/releases/latest",
+        "https://v6.gh-proxy.com/https://api.github.com/repos/SagerNet/sing-box/releases/latest",
+        "https://gh-proxy.com/https://api.github.com/repos/SagerNet/sing-box/releases/latest",
+        "https://ghfast.top/https://api.github.com/repos/SagerNet/sing-box/releases/latest",
+    ]
+}
+
+/// 默认 releases 列表 API 镜像（生产路径）。
+pub(crate) fn default_releases_api_urls() -> &'static [&'static str] {
+    &[
+        "https://api.github.com/repos/SagerNet/sing-box/releases",
+        "https://v6.gh-proxy.com/https://api.github.com/repos/SagerNet/sing-box/releases",
+        "https://gh-proxy.com/https://api.github.com/repos/SagerNet/sing-box/releases",
+        "https://ghfast.top/https://api.github.com/repos/SagerNet/sing-box/releases",
+    ]
+}
+
+/// 从 tag 字符串剥离前缀 `v`（纯逻辑）。
+pub(crate) fn strip_version_tag_prefix(tag_name: &str) -> String {
+    if let Some(stripped) = tag_name.strip_prefix('v') {
+        stripped.to_string()
+    } else {
+        tag_name.to_string()
+    }
+}
+
+/// 过滤正式版 release 标签（排除 prerelease / rc / beta / alpha）。
+pub(crate) fn filter_stable_release_tags(
+    releases: impl IntoIterator<Item = (String, bool)>,
+) -> Vec<String> {
+    releases
+        .into_iter()
+        .filter(|(_, prerelease)| !prerelease)
+        .map(|(tag, _)| strip_version_tag_prefix(&tag))
+        .filter(|v| {
+            let lower = v.to_lowercase();
+            !lower.contains("rc") && !lower.contains("beta") && !lower.contains("alpha")
+        })
+        .collect()
+}
+
+/// 按镜像列表依次请求 latest 版本（可注入 URL，便于本地 mock）。
+pub(crate) async fn fetch_latest_kernel_version_from_urls(
+    api_urls: &[&str],
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     #[derive(Deserialize)]
     struct GitHubRelease {
@@ -18,13 +64,6 @@ pub(super) async fn get_latest_kernel_version(
         .user_agent("sing-box-windows/1.8.2")
         .build()?;
 
-    let api_urls = [
-        "https://api.github.com/repos/SagerNet/sing-box/releases/latest",
-        "https://v6.gh-proxy.com/https://api.github.com/repos/SagerNet/sing-box/releases/latest",
-        "https://gh-proxy.com/https://api.github.com/repos/SagerNet/sing-box/releases/latest",
-        "https://ghfast.top/https://api.github.com/repos/SagerNet/sing-box/releases/latest",
-    ];
-
     for (index, api_url) in api_urls.iter().enumerate() {
         info!("尝试第 {} 个 API 源获取版本: {}", index + 1, api_url);
 
@@ -32,14 +71,7 @@ pub(super) async fn get_latest_kernel_version(
             Ok(response) => {
                 if response.status().is_success() {
                     let release: GitHubRelease = response.json().await?;
-                    let tag_name = release.tag_name;
-
-                    let version = if let Some(stripped) = tag_name.strip_prefix('v') {
-                        stripped.to_string()
-                    } else {
-                        tag_name
-                    };
-
+                    let version = strip_version_tag_prefix(&release.tag_name);
                     info!("成功获取版本号: {} (来源: {})", version, api_url);
                     return Ok(version);
                 } else {
@@ -59,7 +91,9 @@ pub(super) async fn get_latest_kernel_version(
     Err("所有 API 源都获取版本失败".into())
 }
 
-pub(super) async fn get_kernel_releases(
+/// 按镜像列表依次请求正式版 release 列表（可注入 URL）。
+pub(crate) async fn fetch_kernel_releases_from_urls(
+    api_urls: &[&str],
 ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
     #[derive(Deserialize)]
     struct GitHubRelease {
@@ -72,13 +106,6 @@ pub(super) async fn get_kernel_releases(
         .user_agent("sing-box-windows/1.8.2")
         .build()?;
 
-    let api_urls = [
-        "https://api.github.com/repos/SagerNet/sing-box/releases",
-        "https://v6.gh-proxy.com/https://api.github.com/repos/SagerNet/sing-box/releases",
-        "https://gh-proxy.com/https://api.github.com/repos/SagerNet/sing-box/releases",
-        "https://ghfast.top/https://api.github.com/repos/SagerNet/sing-box/releases",
-    ];
-
     for (index, api_url) in api_urls.iter().enumerate() {
         info!("尝试第 {} 个 API 源获取版本列表: {}", index + 1, api_url);
 
@@ -86,23 +113,11 @@ pub(super) async fn get_kernel_releases(
             Ok(response) => {
                 if response.status().is_success() {
                     let releases: Vec<GitHubRelease> = response.json().await?;
-                    let versions: Vec<String> = releases
-                        .into_iter()
-                        .filter(|r| !r.prerelease) // Filter out GitHub pre-releases
-                        .map(|r| {
-                            if let Some(stripped) = r.tag_name.strip_prefix('v') {
-                                stripped.to_string()
-                            } else {
-                                r.tag_name
-                            }
-                        })
-                        .filter(|v| {
-                            let lower = v.to_lowercase();
-                            !lower.contains("rc")
-                                && !lower.contains("beta")
-                                && !lower.contains("alpha")
-                        })
-                        .collect();
+                    let versions = filter_stable_release_tags(
+                        releases
+                            .into_iter()
+                            .map(|r| (r.tag_name, r.prerelease)),
+                    );
 
                     info!(
                         "成功获取版本列表（已过滤正式版），共 {} 个版本 (来源: {})",
@@ -127,7 +142,17 @@ pub(super) async fn get_kernel_releases(
     Err("所有 API 源都获取版本列表失败".into())
 }
 
-fn normalize_version_str(raw: &str) -> String {
+pub(super) async fn get_latest_kernel_version(
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    fetch_latest_kernel_version_from_urls(default_latest_version_api_urls()).await
+}
+
+pub(super) async fn get_kernel_releases(
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    fetch_kernel_releases_from_urls(default_releases_api_urls()).await
+}
+
+pub(crate) fn normalize_version_str(raw: &str) -> String {
     let mut cleaned = raw.trim();
     if cleaned.starts_with("sing-box") {
         cleaned = cleaned.trim_start_matches("sing-box").trim();
@@ -179,31 +204,10 @@ pub(crate) fn extract_clean_version(output: &str) -> String {
     normalize_version_str(trimmed.split("Environment").next().unwrap_or(trimmed))
 }
 
-#[tauri::command]
-pub async fn check_kernel_version(app_handle: AppHandle) -> Result<String, String> {
-    // 1. 尝试从数据库读取缓存的版本号
-    use crate::app::storage::enhanced_storage_service::db_get_app_config;
-    if let Ok(config) = db_get_app_config(app_handle.clone()).await {
-        if let Some(ver) = config.installed_kernel_version {
-            if !ver.is_empty() {
-                // optional: 验证一下文件是否存在，避免只是数据库有记录但文件没了
-                let kernel_path = paths::get_kernel_path();
-                if kernel_path.exists() {
-                    info!("从数据库读取缓存的内核版本: {}", ver);
-                    return Ok(ver);
-                }
-            }
-        }
-    }
-
-    // 2. 如果数据库没有或文件不存在，回退到执行命令检查
-    let kernel_path = paths::get_kernel_path();
-
-    if !kernel_path.exists() {
-        let _ =
-            crate::app::core::kernel_service::embedded::ensure_embedded_kernel(&app_handle).await;
-    }
-
+/// 执行内核 `version` 并解析版本号（hermetic，无 AppHandle）。
+pub(crate) async fn read_kernel_version_from_binary(
+    kernel_path: &std::path::Path,
+) -> Result<String, String> {
     if !kernel_path.exists() {
         return Err(messages::ERR_KERNEL_NOT_FOUND.to_string());
     }
@@ -225,53 +229,26 @@ pub async fn check_kernel_version(app_handle: AppHandle) -> Result<String, Strin
     }
 
     let version_info = String::from_utf8_lossy(&output.stdout);
-    let version = extract_clean_version(&version_info);
-
-    // 3. 将查到的版本回写到数据库，下次就不用查了
-    use crate::app::storage::enhanced_storage_service::db_save_app_config_internal;
-    if let Ok(mut config) = db_get_app_config(app_handle.clone()).await {
-        // 只有当如果不一致时才保存? 或者总是保存确保最新
-        config.installed_kernel_version = Some(version.clone());
-        let _ = db_save_app_config_internal(config, &app_handle).await;
-    }
-
-    Ok(version)
+    Ok(extract_clean_version(&version_info))
 }
 
-#[tauri::command]
-pub async fn check_config_validity(
-    app_handle: AppHandle,
-    config_path: String,
+/// 用指定内核对配置执行 `check`（hermetic）。
+pub(crate) async fn check_config_with_kernel(
+    kernel_path: &std::path::Path,
+    config_path: &std::path::Path,
 ) -> Result<(), String> {
-    let kernel_path = paths::get_kernel_path();
-
     if !kernel_path.exists() {
         return Err(messages::ERR_KERNEL_NOT_FOUND.to_string());
     }
-
-    let path = if config_path.is_empty() {
-        let app_config = db_get_app_config(app_handle)
-            .await
-            .map_err(|e| format!("获取应用配置失败: {}", e))?;
-
-        if let Some(path_str) = app_config.active_config_path {
-            path_str
-        } else {
-            paths::get_config_dir()
-                .join("config.json")
-                .to_string_lossy()
-                .to_string()
-        }
-    } else {
-        config_path
-    };
-
-    if !std::path::Path::new(&path).exists() {
-        return Err(format!("配置文件不存在: {}", path));
+    if !config_path.exists() {
+        return Err(format!(
+            "配置文件不存在: {}",
+            config_path.to_string_lossy()
+        ));
     }
 
     let mut cmd = tokio::process::Command::new(kernel_path);
-    cmd.arg("check").arg("--config").arg(path);
+    cmd.arg("check").arg("--config").arg(config_path);
 
     #[cfg(target_os = "windows")]
     cmd.creation_flags(crate::app::constants::core::process::CREATE_NO_WINDOW);
@@ -287,6 +264,100 @@ pub async fn check_config_validity(
     }
 
     Ok(())
+}
+
+/// 解析配置校验路径：显式路径优先，否则 active_config，再回退默认 config.json。
+pub(crate) fn resolve_config_path_for_validity(
+    explicit_path: &str,
+    active_config_path: Option<&str>,
+    default_config_path: &std::path::Path,
+) -> String {
+    if !explicit_path.is_empty() {
+        return explicit_path.to_string();
+    }
+    if let Some(path_str) = active_config_path {
+        if !path_str.trim().is_empty() {
+            return path_str.to_string();
+        }
+    }
+    default_config_path.to_string_lossy().to_string()
+}
+
+/// 内核版本探测实现（任意 Runtime，便于 Mock）。
+pub async fn check_kernel_version_impl<R: Runtime>(
+    app_handle: &AppHandle<R>,
+) -> Result<String, String> {
+    // 1. 尝试从数据库读取缓存的版本号
+    use crate::app::storage::enhanced_storage_service::db_get_app_config;
+    if let Ok(config) = db_get_app_config(app_handle.clone()).await {
+        if let Some(ver) = config.installed_kernel_version {
+            if !ver.is_empty() {
+                // optional: 验证一下文件是否存在，避免只是数据库有记录但文件没了
+                let kernel_path = paths::get_kernel_path();
+                if kernel_path.exists() {
+                    info!("从数据库读取缓存的内核版本: {}", ver);
+                    return Ok(ver);
+                }
+            }
+        }
+    }
+
+    // 2. 如果数据库没有或文件不存在，回退到执行命令检查
+    let kernel_path = paths::get_kernel_path();
+
+    if !kernel_path.exists() {
+        let _ = crate::app::core::kernel_service::embedded::ensure_embedded_kernel(app_handle).await;
+    }
+
+    let version = read_kernel_version_from_binary(&kernel_path).await?;
+
+    // 3. 将查到的版本回写到数据库，下次就不用查了
+    use crate::app::storage::enhanced_storage_service::db_save_app_config_internal;
+    if let Ok(mut config) = db_get_app_config(app_handle.clone()).await {
+        // 只有当如果不一致时才保存? 或者总是保存确保最新
+        config.installed_kernel_version = Some(version.clone());
+        let _ = db_save_app_config_internal(config, app_handle).await;
+    }
+
+    Ok(version)
+}
+
+#[tauri::command]
+pub async fn check_kernel_version(app_handle: AppHandle) -> Result<String, String> {
+    check_kernel_version_impl(&app_handle).await
+}
+
+/// 配置校验实现（任意 Runtime）。
+pub async fn check_config_validity_impl<R: Runtime>(
+    app_handle: AppHandle<R>,
+    config_path: String,
+) -> Result<(), String> {
+    let kernel_path = paths::get_kernel_path();
+
+    let active = if config_path.is_empty() {
+        let app_config = db_get_app_config(app_handle)
+            .await
+            .map_err(|e| format!("获取应用配置失败: {}", e))?;
+        app_config.active_config_path
+    } else {
+        None
+    };
+
+    let path = resolve_config_path_for_validity(
+        &config_path,
+        active.as_deref(),
+        &paths::get_config_dir().join("config.json"),
+    );
+
+    check_config_with_kernel(&kernel_path, std::path::Path::new(&path)).await
+}
+
+#[tauri::command]
+pub async fn check_config_validity(
+    app_handle: AppHandle,
+    config_path: String,
+) -> Result<(), String> {
+    check_config_validity_impl(app_handle, config_path).await
 }
 
 pub(super) fn get_system_arch() -> &'static str {
@@ -401,3 +472,7 @@ pub async fn get_latest_kernel_version_cmd() -> Result<String, String> {
 pub async fn get_kernel_releases_cmd() -> Result<Vec<String>, String> {
     get_kernel_releases().await.map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+#[path = "versioning.tests.rs"]
+mod tests;

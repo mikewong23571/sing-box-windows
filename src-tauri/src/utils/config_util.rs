@@ -107,3 +107,7 @@ impl ConfigUtil {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "config_util.tests.rs"]
+mod tests;

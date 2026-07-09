@@ -141,7 +141,7 @@ impl TrayRuntimeState {
     }
 }
 
-fn normalize_locale(locale: &str) -> String {
+pub(crate) fn normalize_locale(locale: &str) -> String {
     let trimmed = locale.trim();
     if trimmed.is_empty() {
         "en-US".to_string()
@@ -150,7 +150,7 @@ fn normalize_locale(locale: &str) -> String {
     }
 }
 
-fn normalize_route(path: &str) -> String {
+pub(crate) fn normalize_route(path: &str) -> String {
     let trimmed = path.trim();
     if trimmed.is_empty() || trimmed == "/blank" {
         "/".to_string()
@@ -158,5 +158,69 @@ fn normalize_route(path: &str) -> String {
         trimmed.to_string()
     } else {
         format!("/{}", trimmed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::tray::model::{
+        TrayCloseBehavior, TrayProxyMode, TrayRuntimeStateInput, TrayToggleProxyFeaturePayload,
+    };
+
+    #[test]
+    fn normalize_locale_and_route() {
+        assert_eq!(normalize_locale(""), "en-US");
+        assert_eq!(normalize_locale("  zh-CN  "), "zh-CN");
+        assert_eq!(normalize_route(""), "/");
+        assert_eq!(normalize_route("/blank"), "/");
+        assert_eq!(normalize_route("settings"), "/settings");
+        assert_eq!(normalize_route("/proxies"), "/proxies");
+    }
+
+    #[test]
+    fn tray_runtime_state_apply_and_pending() {
+        let mut state = TrayRuntimeState::default();
+        let payload = TrayRuntimeStateInput {
+            kernel_running: true,
+            system_proxy_enabled: true,
+            tun_enabled: false,
+            active_subscription_name: Some("  sub  ".into()),
+            locale: "ja-JP".into(),
+            window_visible: false,
+            close_behavior: TrayCloseBehavior::Lightweight,
+        };
+        assert!(state.apply_sync_payload(payload));
+        assert!(state.kernel_running);
+        assert_eq!(state.active_subscription_name.as_deref(), Some("sub"));
+        assert_eq!(state.display_mode(), TrayProxyMode::System);
+
+        assert!(state.set_last_visible_route("home"));
+        assert!(!state.set_last_visible_route("/home"));
+        assert!(state.set_window_visible(true));
+        assert!(!state.set_window_visible(true));
+
+        assert!(state.set_pending_restore_route("/x"));
+        assert_eq!(state.take_pending_restore_route().as_deref(), Some("/x"));
+        assert!(state.take_pending_restore_route().is_none());
+
+        let toggle = TrayToggleProxyFeaturePayload {
+            feature: "tun".into(),
+            enabled: true,
+        };
+        assert!(state.set_pending_proxy_toggle(toggle.clone()));
+        assert!(!state.set_pending_proxy_toggle(toggle));
+        assert_eq!(
+            state.take_pending_proxy_toggle().map(|t| t.feature),
+            Some("tun".into())
+        );
+    }
+
+    #[test]
+    fn display_mode_priority_tun_over_system() {
+        let mut state = TrayRuntimeState::default();
+        state.system_proxy_enabled = true;
+        state.tun_enabled = true;
+        assert_eq!(state.display_mode(), TrayProxyMode::Tun);
     }
 }
