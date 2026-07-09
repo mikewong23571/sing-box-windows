@@ -118,6 +118,15 @@ src-tauri/src/app/network/subscription_service/
 
 ## 分批计划
 
+当前状态：
+
+- Batch 1 已完成：存储层只保留持久化职责，带运行时副作用的 command 已迁入 `runtime`。
+- Batch 2 已完成：`RuntimeChange` / `RuntimeApplyOptions` / `apply_runtime_change` 已成为运行时变更入口。
+- Batch 3 已完成：订阅配置生成已抽到 `subscription_service/materializer.rs`，订阅应用运行态经由 `runtime`。
+- Batch 4 已完成：内核生命周期实现迁入 `kernel_service/lifecycle.rs`，readiness 迁入 `readiness.rs`，relay 兼容入口迁入 `relay.rs`，`runtime.rs` 仅保留兼容重导出。
+- Batch 5 已完成：内核 lifecycle 事件 payload 由 `KERNEL_STATE` 快照生成，前端状态展示不再用本地 loading 推导 starting/stopping。
+- Batch 6 已完成：新增架构边界测试和 runtime 决策测试。
+
 ### Batch 1: 存储层去运行时副作用
 
 目标：

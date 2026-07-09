@@ -1,5 +1,6 @@
 use crate::app::constants::paths;
-use crate::app::core::kernel_auto_manage::auto_manage_with_saved_config;
+use crate::app::runtime::change::{RuntimeApplyOptions, RuntimeChange};
+use crate::app::runtime::orchestrator::apply_runtime_change;
 use crate::app::storage::enhanced_storage_service::get_enhanced_storage;
 use crate::app::storage::state_model::{
     AppConfig, LocaleConfig, Subscription, ThemeConfig, UpdateConfig, WindowConfig,
@@ -601,7 +602,10 @@ async fn apply_snapshot(
         .map_err(|e| format!("恢复激活订阅索引失败: {}", e))?;
 
     // 恢复后按最新配置尝试同步运行态（不会强制重启内核）。
-    auto_manage_with_saved_config(app, false, "backup-restore").await;
+    let options = RuntimeApplyOptions::new("backup-restore");
+    if let Err(error) = apply_runtime_change(app, RuntimeChange::AppConfigUpdated, options).await {
+        warn!("恢复后同步运行态失败: {}", error);
+    }
 
     Ok(warnings)
 }

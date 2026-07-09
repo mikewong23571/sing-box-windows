@@ -126,7 +126,10 @@ mod tests {
         for i in 1..=ROTATE_KEEP {
             assert!(rotated_path(&log, i).exists(), "应存在 .{}", i);
         }
-        assert!(!rotated_path(&log, ROTATE_KEEP + 1).exists(), "不应保留超出份数");
+        assert!(
+            !rotated_path(&log, ROTATE_KEEP + 1).exists(),
+            "不应保留超出份数"
+        );
         assert!(!log.exists(), "原文件应已被重命名");
         fs::remove_dir_all(&dir).ok();
     }
@@ -143,11 +146,14 @@ mod tests {
 
     // 简易唯一标识，避免并发测试目录冲突（不引入 uuid 依赖）。
     fn uuid_like() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        format!("{:x}", nanos)
+        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!("{}-{:x}-{}", std::process::id(), nanos, counter)
     }
 }

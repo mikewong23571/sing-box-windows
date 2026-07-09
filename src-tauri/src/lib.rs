@@ -160,12 +160,17 @@ pub fn run() {
                 .await;
 
                 // 后端启动后立即尝试自动管理内核（尊重 auto_start_kernel 设置）
-                crate::app::core::kernel_auto_manage::auto_manage_with_saved_config(
+                let app_start_options =
+                    crate::app::runtime::change::RuntimeApplyOptions::new("app-start");
+                if let Err(err) = crate::app::runtime::orchestrator::apply_runtime_change(
                     &app_handle,
-                    false,
-                    "app-start",
+                    crate::app::runtime::change::RuntimeChange::KernelUpdated,
+                    app_start_options,
                 )
-                .await;
+                .await
+                {
+                    tracing::warn!("启动阶段应用运行态失败: {}", err);
+                }
 
                 if let Err(err) =
                     crate::app::tray::refresh_runtime_state_from_backend(&app_handle, true).await
@@ -224,14 +229,14 @@ pub fn run() {
             crate::app::core::kernel_service::status::is_kernel_running,
             crate::app::core::kernel_service::status::get_system_uptime,
             // Core - Kernel service commands (enhanced)
-            crate::app::core::kernel_service::runtime::kernel_start_enhanced,
-            crate::app::core::kernel_service::runtime::kernel_stop_enhanced,
-            crate::app::core::kernel_service::runtime::kernel_restart_fast,
+            crate::app::core::kernel_service::lifecycle::kernel_start_enhanced,
+            crate::app::core::kernel_service::lifecycle::kernel_stop_enhanced,
+            crate::app::core::kernel_service::lifecycle::kernel_restart_fast,
             crate::app::core::kernel_service::status::kernel_get_status_enhanced,
             crate::app::core::kernel_service::status::kernel_get_snapshot,
             crate::app::core::kernel_service::status::kernel_check_health,
             crate::app::core::kernel_auto_manage::kernel_auto_manage,
-            crate::app::core::kernel_service::runtime::apply_proxy_settings,
+            crate::app::core::kernel_service::lifecycle::apply_proxy_settings,
             // Network - Subscription service commands
             crate::app::network::subscription_service::download_subscription,
             crate::app::network::subscription_service::add_manual_subscription,

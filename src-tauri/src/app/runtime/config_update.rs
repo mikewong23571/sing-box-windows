@@ -1,4 +1,5 @@
-use crate::app::core::kernel_auto_manage::auto_manage_with_saved_config;
+use crate::app::runtime::change::{RuntimeApplyOptions, RuntimeChange};
+use crate::app::runtime::orchestrator::apply_runtime_change;
 use crate::app::storage::enhanced_storage_service::get_enhanced_storage;
 use crate::app::storage::state_model::{AppConfig, Subscription};
 use tauri::AppHandle;
@@ -87,12 +88,10 @@ async fn resolve_patch_mode_for_active_config(
     }
 }
 
-pub(crate) async fn apply_runtime_config_update(
+pub(crate) async fn sync_active_config_settings(
     app: &AppHandle,
     effective_config: &AppConfig,
     use_original_config_hint: Option<bool>,
-    force_restart: bool,
-    reason: &'static str,
 ) {
     if let Some(path) = effective_config.active_config_path.as_deref() {
         let config_path = std::path::PathBuf::from(path);
@@ -106,8 +105,23 @@ pub(crate) async fn apply_runtime_config_update(
             }
         }
     }
+}
 
-    auto_manage_with_saved_config(app, force_restart, reason).await;
+pub async fn apply_runtime_config_update(
+    app: &AppHandle,
+    _effective_config: &AppConfig,
+    use_original_config_hint: Option<bool>,
+    force_restart: bool,
+    reason: &'static str,
+) {
+    let options = RuntimeApplyOptions::new(reason)
+        .patch_active_config(true)
+        .force_restart(force_restart)
+        .use_original_config_hint(use_original_config_hint);
+
+    if let Err(error) = apply_runtime_change(app, RuntimeChange::AppConfigUpdated, options).await {
+        tracing::warn!("应用运行态配置更新失败({}): {}", reason, error);
+    }
 }
 
 #[cfg(test)]

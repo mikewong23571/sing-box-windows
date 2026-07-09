@@ -310,12 +310,8 @@ export const useKernelStore = defineStore('kernel', () => {
   const startupDiagnosisSummary = computed(
     () => startupDiagnosis.value?.message || startupDiagnosis.value?.detail || '',
   )
-  const isStarting = computed(
-    () => status.value.kernel_state === 'starting' || (isLoading.value && !isRunning.value),
-  )
-  const isStopping = computed(
-    () => status.value.kernel_state === 'stopping' || (isLoading.value && isRunning.value),
-  )
+  const isStarting = computed(() => status.value.kernel_state === 'starting')
+  const isStopping = computed(() => status.value.kernel_state === 'stopping')
   const uptime = computed(() => {
     const ms = status.value.uptime_ms || 0
     const seconds = Math.floor(ms / 1000)

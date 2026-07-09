@@ -1,9 +1,10 @@
+use crate::app::runtime::change::{RuntimeApplyOptions, RuntimeChange};
 use crate::app::runtime::config_update::{
-    apply_runtime_config_update, resolve_patch_mode_with_hint, sync_settings_to_config_file,
-    ConfigPatchMode,
+    resolve_patch_mode_with_hint, sync_settings_to_config_file, ConfigPatchMode,
 };
+use crate::app::runtime::orchestrator::apply_runtime_change;
 use crate::app::storage::enhanced_storage_service::{
-    db_get_app_config_internal, db_save_app_config_internal, get_enhanced_storage,
+    db_save_app_config_internal, get_enhanced_storage,
 };
 use crate::app::storage::state_model::AppConfig;
 use tauri::AppHandle;
@@ -23,10 +24,12 @@ pub async fn db_save_app_config(
         return Ok(());
     }
 
-    let effective_config = db_get_app_config_internal(&app).await?;
     // 保存设置后，尽量把变更同步到“当前生效配置文件”，避免用户需要重新下载订阅/重启应用才能生效。
     // 同步逻辑采用“局部 patch”策略：如果配置文件不是本程序生成的结构，会尽量只修改端口/TUN/DNS 策略等通用字段。
-    apply_runtime_config_update(&app, &effective_config, None, true, "app-config-updated").await;
+    let options = RuntimeApplyOptions::new("app-config-updated")
+        .patch_active_config(true)
+        .force_restart(true);
+    apply_runtime_change(&app, RuntimeChange::AppConfigUpdated, options).await?;
 
     Ok(())
 }

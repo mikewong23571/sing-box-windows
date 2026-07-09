@@ -26,8 +26,6 @@ export const useKernelStatus = (store?: KernelStore) => {
     if (status.value.kernel_state === 'failed') return 'failed'
     if (status.value.kernel_state === 'crashed') return 'crashed'
 
-    if (isStarting.value) return 'starting'
-    if (isStopping.value) return 'stopping'
     if (isRunning.value) {
       return isReady.value ? 'running' : 'disconnected'
     }

@@ -6,6 +6,8 @@ use crate::app::core::kernel_service::{
     orchestrated_start_kernel, KernelRuntimeConfig, ProxyOverrides,
 };
 use crate::app::core::tun_profile::TunProxyOptions;
+use crate::app::runtime::change::{RuntimeApplyOptions, RuntimeChange};
+use crate::app::runtime::orchestrator::apply_runtime_change;
 use crate::app::storage::enhanced_storage_service::db_get_app_config;
 use crate::app::storage::state_model::AppConfig;
 use serde::Serialize;
@@ -39,14 +41,14 @@ impl AutoManageOptions {
     }
 }
 
-#[derive(Debug, Serialize)]
-struct AutoManageResult {
-    state: String,
-    message: String,
-    kernel_installed: bool,
-    config_ready: bool,
-    attempted_start: bool,
-    last_start_message: Option<String>,
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct AutoManageResult {
+    pub state: String,
+    pub message: String,
+    pub kernel_installed: bool,
+    pub config_ready: bool,
+    pub attempted_start: bool,
+    pub last_start_message: Option<String>,
 }
 
 impl AutoManageResult {
@@ -114,8 +116,8 @@ async fn auto_manage_kernel_internal(
     app_handle: AppHandle,
     options: AutoManageOptions,
 ) -> Result<AutoManageResult, String> {
-    let _attempt_id = crate::app::core::kernel_service::state::KERNEL_STATE
-        .begin_attempt("kernel-auto-manage");
+    let _attempt_id =
+        crate::app::core::kernel_service::state::KERNEL_STATE.begin_attempt("kernel-auto-manage");
 
     if let Err(err) = ensure_embedded_kernel(&app_handle).await {
         warn!("安装内嵌内核失败，继续按现有逻辑处理: {}", err);
@@ -123,7 +125,10 @@ async fn auto_manage_kernel_internal(
 
     // 预下载 metacubexd UI，避免首次启动时 sing-box 下载阻塞 API
     if let Err(err) = ensure_external_ui().await {
-        warn!("预下载 metacubexd UI 失败（内核启动时仍可自行下载）: {}", err);
+        warn!(
+            "预下载 metacubexd UI 失败（内核启动时仍可自行下载）: {}",
+            err
+        );
     }
 
     let overrides = options.to_overrides();
@@ -188,11 +193,52 @@ async fn auto_manage_kernel_internal(
     }
 }
 
-pub async fn auto_manage_with_saved_config(
+fn emit_auto_manage_diagnostics(app_handle: &AppHandle, result: &AutoManageResult, reason: &str) {
+    info!(
+        "自动管理({})完成，状态: {}, 信息: {}",
+        reason, result.state, result.message
+    );
+
+    match result.state.as_str() {
+        "invalid_config" => {
+            emit_kernel_error_with_context(
+                app_handle,
+                "KERNEL_CONFIG_INVALID",
+                "内核启动失败：配置校验未通过",
+                Some(&result.message),
+                Some("kernel.auto_manage"),
+                true,
+            );
+        }
+        "error" => {
+            emit_kernel_error_with_context(
+                app_handle,
+                "KERNEL_AUTO_MANAGE_FAILED",
+                "内核自动管理失败",
+                Some(&result.message),
+                Some("kernel.auto_manage"),
+                true,
+            );
+        }
+        "missing_kernel" => {
+            emit_kernel_error_with_context(
+                app_handle,
+                "KERNEL_BINARY_MISSING",
+                "未检测到内核文件，请先安装内核",
+                Some(&result.message),
+                Some("kernel.auto_manage"),
+                false,
+            );
+        }
+        _ => {}
+    }
+}
+
+pub(crate) async fn run_auto_manage_with_saved_config(
     app_handle: &AppHandle,
     force_restart: bool,
     reason: &str,
-) {
+) -> Result<Option<AutoManageResult>, String> {
     match db_get_app_config(app_handle.clone()).await {
         Ok(config) => {
             let mut options = AutoManageOptions::from_app_config(config);
@@ -200,44 +246,8 @@ pub async fn auto_manage_with_saved_config(
 
             match auto_manage_kernel_internal(app_handle.clone(), options).await {
                 Ok(result) => {
-                    info!(
-                        "自动管理({})完成，状态: {}, 信息: {}",
-                        reason, result.state, result.message
-                    );
-
-                    match result.state.as_str() {
-                        "invalid_config" => {
-                            emit_kernel_error_with_context(
-                                app_handle,
-                                "KERNEL_CONFIG_INVALID",
-                                "内核启动失败：配置校验未通过",
-                                Some(&result.message),
-                                Some("kernel.auto_manage"),
-                                true,
-                            );
-                        }
-                        "error" => {
-                            emit_kernel_error_with_context(
-                                app_handle,
-                                "KERNEL_AUTO_MANAGE_FAILED",
-                                "内核自动管理失败",
-                                Some(&result.message),
-                                Some("kernel.auto_manage"),
-                                true,
-                            );
-                        }
-                        "missing_kernel" => {
-                            emit_kernel_error_with_context(
-                                app_handle,
-                                "KERNEL_BINARY_MISSING",
-                                "未检测到内核文件，请先安装内核",
-                                Some(&result.message),
-                                Some("kernel.auto_manage"),
-                                false,
-                            );
-                        }
-                        _ => {}
-                    }
+                    emit_auto_manage_diagnostics(app_handle, &result, reason);
+                    Ok(Some(result))
                 }
                 Err(err) => {
                     warn!("自动管理({})失败: {}", reason, err);
@@ -249,12 +259,27 @@ pub async fn auto_manage_with_saved_config(
                         Some("kernel.auto_manage"),
                         true,
                     );
+                    Err(err)
                 }
             }
         }
         Err(err) => {
             warn!("加载应用配置失败，跳过自动管理({}): {}", reason, err);
+            Ok(None)
         }
+    }
+}
+
+pub async fn auto_manage_with_saved_config(
+    app_handle: &AppHandle,
+    force_restart: bool,
+    reason: &str,
+) {
+    let options = RuntimeApplyOptions::new(reason.to_string()).force_restart(force_restart);
+    if let Err(error) =
+        apply_runtime_change(app_handle, RuntimeChange::KernelUpdated, options).await
+    {
+        warn!("运行态编排自动管理失败({}): {}", reason, error);
     }
 }
 
@@ -289,38 +314,6 @@ pub async fn kernel_auto_manage(
     };
 
     let result = auto_manage_kernel_internal(app_handle.clone(), options).await?;
-    match result.state.as_str() {
-        "invalid_config" => {
-            emit_kernel_error_with_context(
-                &app_handle,
-                "KERNEL_CONFIG_INVALID",
-                "内核启动失败：配置校验未通过",
-                Some(&result.message),
-                Some("kernel.auto_manage"),
-                true,
-            );
-        }
-        "error" => {
-            emit_kernel_error_with_context(
-                &app_handle,
-                "KERNEL_AUTO_MANAGE_FAILED",
-                "内核自动管理失败",
-                Some(&result.message),
-                Some("kernel.auto_manage"),
-                true,
-            );
-        }
-        "missing_kernel" => {
-            emit_kernel_error_with_context(
-                &app_handle,
-                "KERNEL_BINARY_MISSING",
-                "未检测到内核文件，请先安装内核",
-                Some(&result.message),
-                Some("kernel.auto_manage"),
-                false,
-            );
-        }
-        _ => {}
-    }
+    emit_auto_manage_diagnostics(&app_handle, &result, "kernel-auto-manage-command");
     serde_json::to_value(result).map_err(|e| e.to_string())
 }

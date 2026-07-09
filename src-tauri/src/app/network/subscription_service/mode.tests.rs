@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -12,11 +13,16 @@ struct CapturedRequest {
 }
 
 fn create_temp_dir(label: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after epoch")
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("sing-box-windows-{label}-{unique}"));
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "sing-box-windows-{label}-{}-{unique}-{counter}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).expect("should create temp dir");
     dir
 }

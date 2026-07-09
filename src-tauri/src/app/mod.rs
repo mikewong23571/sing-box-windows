@@ -37,6 +37,10 @@ pub mod system {
 // Tray services
 pub mod tray;
 
+#[cfg(test)]
+#[path = "architecture.tests.rs"]
+mod architecture_tests;
+
 // Re-exports for backward compatibility
 pub use core::kernel_auto_manage;
 pub use core::kernel_service;

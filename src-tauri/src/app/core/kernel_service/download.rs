@@ -1,8 +1,9 @@
-use crate::app::core::kernel_auto_manage::auto_manage_with_saved_config;
 use crate::app::core::kernel_service::runtime::stop_kernel;
 use crate::app::core::kernel_service::status::is_kernel_running;
 use crate::app::core::kernel_service::versioning::{get_latest_kernel_version, get_system_arch};
 use crate::app::core::kernel_service::PROCESS_MANAGER;
+use crate::app::runtime::change::{RuntimeApplyOptions, RuntimeChange};
+use crate::app::runtime::orchestrator::apply_runtime_change;
 use serde_json::json;
 use std::path::Path;
 use std::time::Duration;
@@ -380,7 +381,12 @@ pub async fn download_kernel(app_handle: AppHandle, version: Option<String>) -> 
 
     if was_running_before_update {
         info!("内核更新完成，自动重新启动内核");
-        auto_manage_with_saved_config(&app_handle, true, "kernel-update").await;
+        let options = RuntimeApplyOptions::new("kernel-update").force_restart(true);
+        if let Err(error) =
+            apply_runtime_change(&app_handle, RuntimeChange::KernelUpdated, options).await
+        {
+            warn!("内核更新后自动重启失败: {}", error);
+        }
     }
 
     // 更新安装版本信息到数据库

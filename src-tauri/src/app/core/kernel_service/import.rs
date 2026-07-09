@@ -1,9 +1,10 @@
 use crate::app::constants::paths;
-use crate::app::core::kernel_auto_manage::auto_manage_with_saved_config;
 use crate::app::core::kernel_service::runtime::stop_kernel;
 use crate::app::core::kernel_service::status::is_kernel_running;
 use crate::app::core::kernel_service::versioning::extract_clean_version;
 use crate::app::core::kernel_service::PROCESS_MANAGER;
+use crate::app::runtime::change::{RuntimeApplyOptions, RuntimeChange};
+use crate::app::runtime::orchestrator::apply_runtime_change;
 use crate::app::storage::enhanced_storage_service::{
     db_get_app_config, db_save_app_config_internal,
 };
@@ -91,15 +92,26 @@ async fn import_kernel_executable_inner(
     let backup_path = replace_installed_kernel(&staged_binary_path, &kernel_path).await?;
 
     let restarted = if was_running_before_import {
-        auto_manage_with_saved_config(app_handle, true, "kernel-manual-import").await;
+        let import_options = RuntimeApplyOptions::new("kernel-manual-import").force_restart(true);
+        if let Err(error) =
+            apply_runtime_change(app_handle, RuntimeChange::KernelUpdated, import_options).await
+        {
+            warn!("导入内核后重启失败: {}", error);
+        }
         let restarted = wait_kernel_running(Duration::from_secs(10)).await;
 
         if !restarted {
             if let Some(path) = backup_path.as_deref() {
                 warn!("新内核重启失败，尝试回滚到旧内核: {}", path);
                 restore_kernel_from_backup(&kernel_path, Path::new(path)).await?;
-                auto_manage_with_saved_config(app_handle, true, "kernel-manual-import-rollback")
-                    .await;
+                let rollback_options =
+                    RuntimeApplyOptions::new("kernel-manual-import-rollback").force_restart(true);
+                if let Err(error) =
+                    apply_runtime_change(app_handle, RuntimeChange::KernelUpdated, rollback_options)
+                        .await
+                {
+                    warn!("导入内核回滚后重启失败: {}", error);
+                }
             }
             return Err("新内核导入成功但重启失败，已自动回滚到旧内核".to_string());
         }

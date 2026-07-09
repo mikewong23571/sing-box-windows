@@ -140,6 +140,22 @@ pub fn emit_kernel_status(app_handle: &AppHandle, status: &KernelStatusPayload) 
     let _ = app_handle.emit("kernel-status-changed", status.to_json());
 }
 
+pub fn build_kernel_lifecycle_payload(
+    proxy_mode: &str,
+    api_port: u16,
+    proxy_port: u16,
+    auto_restarted: bool,
+) -> serde_json::Value {
+    let mut payload = KernelStatusPayload::from_state().to_json();
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("proxy_mode".to_string(), json!(proxy_mode));
+        obj.insert("api_port".to_string(), json!(api_port));
+        obj.insert("proxy_port".to_string(), json!(proxy_port));
+        obj.insert("auto_restarted".to_string(), json!(auto_restarted));
+    }
+    payload
+}
+
 /// 发送内核已启动事件
 ///
 /// 同时发送 `kernel-started`、`kernel-status-changed` 和 `kernel-ready` 事件。
@@ -166,22 +182,12 @@ pub fn emit_kernel_started(
     });
     KERNEL_STATE.clear_startup_diagnosis();
 
-    let started_payload = json!({
-        "process_running": true,
-        "api_ready": true,
-        "websocket_ready": true,
-        "readiness": KERNEL_STATE.get_readiness(),
-        "startup_diagnosis": KERNEL_STATE.get_startup_diagnosis(),
-        "proxy_mode": proxy_mode,
-        "api_port": api_port,
-        "proxy_port": proxy_port,
-        "auto_restarted": auto_restarted,
-        "kernel_state": KERNEL_STATE.get_state().as_str(),
-        "state_version": current_state_version()
-    });
+    let status_payload = KernelStatusPayload::from_state();
+    let started_payload =
+        build_kernel_lifecycle_payload(proxy_mode, api_port, proxy_port, auto_restarted);
 
     let _ = app_handle.emit("kernel-started", started_payload);
-    emit_kernel_status(app_handle, &KernelStatusPayload::running());
+    emit_kernel_status(app_handle, &status_payload);
     let _ = app_handle.emit("kernel-ready", ());
 }
 
@@ -213,11 +219,7 @@ pub fn emit_kernel_starting(
         readiness.api_ready = false;
         readiness.relay_ready = false;
     });
-    let payload = json!({
-        "proxy_mode": proxy_mode,
-        "api_port": api_port,
-        "proxy_port": proxy_port
-    });
+    let payload = build_kernel_lifecycle_payload(proxy_mode, api_port, proxy_port, false);
     let _ = app_handle.emit("kernel-starting", payload);
     emit_kernel_status(app_handle, &KernelStatusPayload::from_state());
 }

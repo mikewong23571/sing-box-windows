@@ -1,5 +1,4 @@
 use crate::app::constants::paths;
-use crate::app::core::kernel_service::orchestrator::current_state_version;
 use crate::app::core::kernel_service::state::KERNEL_STATE;
 use crate::app::core::kernel_service::utils::KernelStatusPayload;
 use crate::app::core::kernel_service::PROCESS_MANAGER;
@@ -126,29 +125,20 @@ pub async fn kernel_get_status_enhanced(
     }
 
     let startup_diagnosis = KERNEL_STATE.get_startup_diagnosis();
-    let payload = KernelStatusPayload::new(
-        process_running,
-        api_ready,
-        websocket_ready,
-        readiness,
-        startup_diagnosis.clone(),
-    );
+    let mut payload = KernelStatusPayload::from_state().to_json();
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("uptime_ms".to_string(), serde_json::json!(0));
+        obj.insert("version".to_string(), serde_json::json!(version));
+        obj.insert(
+            "error".to_string(),
+            serde_json::json!(startup_diagnosis
+                .as_ref()
+                .map(|diagnosis| diagnosis.message.clone())
+                .or(error)),
+        );
+    }
 
-    Ok(serde_json::json!({
-        "process_running": process_running,
-        "api_ready": api_ready,
-        "websocket_ready": websocket_ready,
-        "uptime_ms": 0,
-        "version": version,
-        "error": startup_diagnosis
-            .as_ref()
-            .map(|diagnosis| diagnosis.message.clone())
-            .or(error),
-        "readiness": payload.readiness,
-        "startup_diagnosis": payload.startup_diagnosis,
-        "kernel_state": KERNEL_STATE.get_state().as_str(),
-        "state_version": current_state_version()
-    }))
+    Ok(payload)
 }
 
 #[tauri::command]

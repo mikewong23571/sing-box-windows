@@ -1,53 +1,29 @@
 pub mod auto_update;
 pub mod helpers;
+mod materializer;
 mod mode;
 mod parser;
 
 use crate::app::constants::{messages, paths};
-use crate::app::core::kernel_auto_manage::auto_manage_with_saved_config;
-use crate::app::core::proxy_service::apply_proxy_runtime_state;
-use crate::app::runtime::config_update::apply_runtime_config_update;
-use crate::app::singbox::config_generator;
-use crate::app::singbox::settings_patch::apply_port_settings_only;
+use crate::app::runtime::change::{RuntimeApplyOptions, RuntimeChange};
+use crate::app::runtime::orchestrator::apply_runtime_change;
 use crate::app::storage::enhanced_storage_service::{
     db_get_app_config, db_get_subscriptions, db_save_app_config_internal, db_save_subscriptions,
 };
 use crate::app::storage::state_model::AppConfig;
 use crate::utils::http_client;
-use base64::{engine::general_purpose, Engine as _};
-use helpers::{backup_existing_config, resolve_target_config_path, runtime_state_from_config};
+use helpers::resolve_target_config_path;
+#[cfg(test)]
+use materializer::try_decode_base64_to_text;
+use materializer::{write_downloaded_subscription_config, write_manual_subscription_config};
+#[cfg(test)]
 use parser::extract_nodes_from_subscription;
 use reqwest::header::{HeaderMap, USER_AGENT};
 use serde::Serialize;
-use serde_json::Value;
 use std::error::Error;
-use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
-use tracing::{error, info, warn};
-
-/// 尝试把订阅内容当作 Base64 解码成 UTF-8 文本。
-///
-/// 说明：不少机场会把 Clash YAML / URI 列表做一次 Base64 封装，且可能包含换行。
-fn try_decode_base64_to_text(raw: &str) -> Option<String> {
-    let mut s: String = raw.split_whitespace().collect();
-    if s.is_empty() {
-        return None;
-    }
-
-    // 补齐 padding，兼容省略 '=' 的情况
-    let rem = s.len() % 4;
-    if rem != 0 {
-        s.push_str(&"=".repeat(4 - rem));
-    }
-
-    let bytes = general_purpose::STANDARD
-        .decode(&s)
-        .or_else(|_| general_purpose::URL_SAFE.decode(&s))
-        .ok()?;
-    String::from_utf8(bytes).ok()
-}
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubscriptionPersistResult {
@@ -296,32 +272,39 @@ pub async fn download_subscription(
 
     let target_path = resolve_target_config_path(file_name, config_path)?;
     let trimmed_url = url.trim();
-    let userinfo = download_and_process_subscription(
-        trimmed_url,
+    info!("开始下载订阅: {}", trimmed_url);
+    let (response_text, userinfo) = fetch_subscription_content(trimmed_url)
+        .await
+        .map_err(|e| format!("{}: {}", messages::ERR_SUBSCRIPTION_FAILED, e))?;
+    info!("订阅下载成功，内容长度: {} 字节", response_text.len());
+    write_downloaded_subscription_config(
+        &response_text,
         use_original_config,
-        app_handle,
         &app_config,
         &target_path,
     )
-    .await
     .map_err(|e| format!("{}: {}", messages::ERR_SUBSCRIPTION_FAILED, e))?;
 
     if apply_runtime {
-        if let Err(e) = set_active_config_path(
-            app_handle.clone(),
+        let active_result = set_active_config_path_internal(
+            app_handle,
             Some(target_path.to_string_lossy().to_string()),
-            Some(use_original_config),
         )
-        .await
-        {
+        .await;
+
+        if let Err(e) = active_result {
             warn!("写入激活配置指针失败: {}", e);
         }
 
-        let runtime_state = runtime_state_from_config(&app_config);
-        if let Err(e) = apply_proxy_runtime_state(app_handle, &runtime_state).await {
-            warn!("应用代理配置失败: {}", e);
+        let options = RuntimeApplyOptions::new("subscription-download")
+            .patch_active_config(true)
+            .force_restart(true)
+            .use_original_config_hint(Some(use_original_config));
+        if let Err(e) =
+            apply_runtime_change(app_handle, RuntimeChange::SubscriptionApplied, options).await
+        {
+            warn!("应用订阅运行态失败: {}", e);
         }
-        auto_manage_with_saved_config(app_handle, true, "subscription-download").await;
     }
 
     if let Err(e) =
@@ -367,31 +350,29 @@ pub async fn add_manual_subscription(
 
     let target_path = resolve_target_config_path(file_name, config_path)?;
 
-    process_subscription_content(
-        content,
-        use_original_config,
-        app_handle,
-        &app_config,
-        &target_path,
-    )
-    .map_err(|e| format!("{}: {}", messages::ERR_PROCESS_SUBSCRIPTION_FAILED, e))?;
+    write_manual_subscription_config(&content, use_original_config, &app_config, &target_path)
+        .map_err(|e| format!("{}: {}", messages::ERR_PROCESS_SUBSCRIPTION_FAILED, e))?;
 
     if apply_runtime {
-        if let Err(e) = set_active_config_path(
-            app_handle.clone(),
+        let active_result = set_active_config_path_internal(
+            app_handle,
             Some(target_path.to_string_lossy().to_string()),
-            Some(use_original_config),
         )
-        .await
-        {
+        .await;
+
+        if let Err(e) = active_result {
             warn!("写入激活配置指针失败: {}", e);
         }
 
-        let runtime_state = runtime_state_from_config(&app_config);
-        if let Err(e) = apply_proxy_runtime_state(app_handle, &runtime_state).await {
-            warn!("应用代理配置失败: {}", e);
+        let options = RuntimeApplyOptions::new("subscription-manual")
+            .patch_active_config(true)
+            .force_restart(true)
+            .use_original_config_hint(Some(use_original_config));
+        if let Err(e) =
+            apply_runtime_change(app_handle, RuntimeChange::SubscriptionApplied, options).await
+        {
+            warn!("应用手动订阅运行态失败: {}", e);
         }
-        auto_manage_with_saved_config(app_handle, true, "subscription-manual").await;
     }
 
     Ok(SubscriptionPersistResult {
@@ -423,17 +404,14 @@ pub async fn get_current_config(app_handle: AppHandle) -> Result<String, String>
         .map_err(|e| format!("{}: {}", messages::ERR_CONFIG_READ_FAILED, e))
 }
 
-#[tauri::command]
-pub async fn set_active_config_path(
-    app_handle: AppHandle,
+async fn set_active_config_path_internal(
+    app_handle: &AppHandle,
     config_path: Option<String>,
-    use_original_config: Option<bool>,
-) -> Result<(), String> {
+) -> Result<(AppConfig, bool), String> {
     let mut app_config = db_get_app_config(app_handle.clone())
         .await
         .map_err(|e| format!("获取应用配置失败: {}", e))?;
 
-    // 记录 active_config_path 的变更，便于排查“过一段时间配置指针被改写”的问题
     let previous = app_config.active_config_path.clone();
     app_config.active_config_path = config_path;
     info!(
@@ -441,18 +419,29 @@ pub async fn set_active_config_path(
         previous, app_config.active_config_path
     );
 
-    db_save_app_config_internal(app_config.clone(), &app_handle)
+    db_save_app_config_internal(app_config.clone(), app_handle)
         .await
         .map_err(|e| format!("保存配置路径失败: {}", e))?;
 
-    apply_runtime_config_update(
-        &app_handle,
-        &app_config,
-        use_original_config,
-        active_config_change_requires_restart(&previous, &app_config.active_config_path),
-        "active-config-path-updated",
-    )
-    .await;
+    let requires_restart =
+        active_config_change_requires_restart(&previous, &app_config.active_config_path);
+
+    Ok((app_config, requires_restart))
+}
+
+#[tauri::command]
+pub async fn set_active_config_path(
+    app_handle: AppHandle,
+    config_path: Option<String>,
+    use_original_config: Option<bool>,
+) -> Result<(), String> {
+    let (_, requires_restart) = set_active_config_path_internal(&app_handle, config_path).await?;
+
+    let options = RuntimeApplyOptions::new("active-config-path-updated")
+        .patch_active_config(true)
+        .force_restart(requires_restart)
+        .use_original_config_hint(use_original_config);
+    apply_runtime_change(&app_handle, RuntimeChange::ActiveConfigChanged, options).await?;
 
     Ok(())
 }
@@ -495,207 +484,6 @@ pub async fn toggle_proxy_mode(app_handle: AppHandle, mode: String) -> Result<St
 #[tauri::command]
 pub async fn get_current_proxy_mode(app_handle: AppHandle) -> Result<String, String> {
     mode::get_current_proxy_mode_impl(app_handle).await
-}
-
-async fn download_and_process_subscription(
-    url: &str,
-    use_original_config: bool,
-    _app_handle: &AppHandle,
-    app_config: &AppConfig,
-    target_path: &Path,
-) -> Result<Option<SubscriptionUserInfo>, Box<dyn Error>> {
-    let work_dir = crate::utils::app_util::get_work_dir_sync();
-    let sing_box_dir = Path::new(&work_dir).join("sing-box");
-
-    if !sing_box_dir.exists() {
-        info!("正在创建Sing-Box目录: {:?}", sing_box_dir);
-        if let Err(e) = std::fs::create_dir_all(&sing_box_dir) {
-            let err_msg = format!("创建Sing-Box目录失败: {}", e);
-            error!("{}", err_msg);
-            return Err(err_msg.into());
-        }
-    }
-
-    info!("开始下载订阅: {}", url);
-
-    let (response_text, userinfo) = fetch_subscription_content(url)
-        .await
-        .map_err(|e| format!("{}: {}", messages::ERR_SUBSCRIPTION_FAILED, e))?;
-
-    info!("订阅下载成功，内容长度: {} 字节", response_text.len());
-
-    if use_original_config {
-        info!("使用原始订阅内容，仅修改必要的端口和地址");
-        process_original_config(&response_text, app_config, target_path)?;
-        return Ok(userinfo);
-    }
-
-    let mut extracted_nodes = extract_nodes_from_subscription(&response_text)?;
-    info!("从原始内容提取到 {} 个节点", extracted_nodes.len());
-
-    if extracted_nodes.is_empty() {
-        info!("未从原始内容提取到节点，尝试base64解码...");
-
-        if let Some(decoded_text) = try_decode_base64_to_text(&response_text) {
-            info!("base64 解码成功，重新从解码内容提取节点...");
-            extracted_nodes = extract_nodes_from_subscription(&decoded_text)?;
-            info!("从 base64 解码内容提取到 {} 个节点", extracted_nodes.len());
-        }
-    }
-
-    if extracted_nodes.is_empty() {
-        info!("标准解码方法均未提取到节点，尝试移除前缀后再解码...");
-
-        let stripped_text = response_text
-            .trim()
-            .replace("vmess://", "")
-            .replace("ss://", "")
-            .replace("trojan://", "")
-            .replace("vless://", "")
-            .replace("hysteria2://", "");
-
-        if let Ok(decoded) = general_purpose::STANDARD.decode(&stripped_text) {
-            if let Ok(decoded_text) = String::from_utf8(decoded) {
-                extracted_nodes = extract_nodes_from_subscription(&decoded_text)?;
-                info!(
-                    "从移除前缀后解码内容提取到 {} 个节点",
-                    extracted_nodes.len()
-                );
-            }
-        }
-    }
-
-    if extracted_nodes.is_empty() {
-        error!("无法从订阅内容提取节点信息，已尝试所有解码方式");
-        return Err(
-            "无法从订阅内容提取节点信息（支持 sing-box JSON / Clash YAML / URI 列表，且可 base64 封装），请检查订阅链接或内容格式"
-                .into(),
-        );
-    }
-
-    info!(
-        "成功提取到 {} 个节点，准备应用到配置",
-        extracted_nodes.len()
-    );
-
-    let dir = target_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(&work_dir).join("sing-box"));
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        error!("{}: {}", messages::ERR_CREATE_DIR_FAILED, e);
-    }
-
-    // 不再读取/替换模板文件：直接根据 AppConfig 生成一份通用配置骨架，然后注入订阅节点。
-    let config = config_generator::generate_config_with_nodes(app_config, &extracted_nodes)
-        .map_err(|e| format!("生成配置失败: {}", e))?;
-
-    info!("正在保存配置到: {:?}", target_path);
-
-    if let Some(parent) = target_path.parent() {
-        if !parent.exists() {
-            info!("创建配置目录: {:?}", parent);
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                let err_msg = format!("创建配置目录失败: {}", e);
-                error!("{}", err_msg);
-                return Err(err_msg.into());
-            }
-        }
-    }
-
-    let _backup = backup_existing_config(target_path);
-
-    let config_str = serde_json::to_string_pretty(&config)?;
-    let mut file = File::create(target_path)?;
-    file.write_all(config_str.as_bytes())?;
-
-    info!("配置已成功保存到: {:?}", target_path);
-    info!("订阅已更新并应用到模板，配置已保存");
-    Ok(userinfo)
-}
-
-fn process_subscription_content(
-    content: String,
-    use_original_config: bool,
-    _app_handle: &AppHandle,
-    app_config: &AppConfig,
-    target_path: &Path,
-) -> Result<(), Box<dyn Error>> {
-    if use_original_config {
-        info!("使用原始配置内容，仅调整端口和地址");
-        process_original_config(&content, app_config, target_path)?;
-        return Ok(());
-    }
-
-    let mut extracted_nodes = extract_nodes_from_subscription(&content)?;
-    info!("从手动内容提取到 {} 个节点", extracted_nodes.len());
-
-    if extracted_nodes.is_empty() {
-        if let Some(decoded_text) = try_decode_base64_to_text(&content) {
-            info!("手动内容 base64 解码成功，重新提取节点");
-            extracted_nodes = extract_nodes_from_subscription(&decoded_text)?;
-            info!("从解码内容提取到 {} 个节点", extracted_nodes.len());
-        }
-    }
-
-    if extracted_nodes.is_empty() {
-        return Err("无法从配置内容提取节点，请检查格式".into());
-    }
-
-    // 手动输入的订阅内容（URI/节点列表等）同样走“生成骨架 + 注入节点”的路径。
-    let config = config_generator::generate_config_with_nodes(app_config, &extracted_nodes)
-        .map_err(|e| format!("生成配置失败: {}", e))?;
-
-    info!("正在保存手动配置到: {:?}", target_path);
-
-    if let Some(parent) = target_path.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent)?;
-        }
-    }
-
-    let _backup = backup_existing_config(target_path);
-
-    let config_str = serde_json::to_string_pretty(&config)?;
-    let mut file = File::create(target_path)?;
-    file.write_all(config_str.as_bytes())?;
-
-    info!("手动配置已保存");
-    Ok(())
-}
-
-fn process_original_config(
-    content: &str,
-    app_config: &AppConfig,
-    target_path: &Path,
-) -> Result<(), Box<dyn Error>> {
-    info!("处理原始订阅配置，仅调整端口");
-
-    let mut config: Value = serde_json::from_str(content)?;
-    apply_port_settings_only(&mut config, app_config);
-
-    info!("正在保存配置到: {:?}", target_path);
-
-    if let Some(parent) = target_path.parent() {
-        if !parent.exists() {
-            info!("创建配置目录: {:?}", parent);
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                let err_msg = format!("创建配置目录失败: {}", e);
-                error!("{}", err_msg);
-                return Err(err_msg.into());
-            }
-        }
-    }
-
-    let config_str = serde_json::to_string_pretty(&config)?;
-
-    let _backup = backup_existing_config(target_path);
-
-    let mut file = File::create(target_path)?;
-    file.write_all(config_str.as_bytes())?;
-
-    info!("原始订阅配置（修改端口后）已成功保存");
-    Ok(())
 }
 
 #[cfg(test)]
