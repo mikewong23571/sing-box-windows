@@ -53,6 +53,10 @@ export default {
     stop: 'Остановка',
     restart: 'Перезапуск',
     restartAsAdmin: 'Перезапуск от имени администратора',
+    startSuccess: 'Ядро успешно запущено.',
+    startFailed: 'Ошибка запуска',
+    stopSuccess: 'Ядро остановлено.',
+    stopFailed: 'Ошибка остановки',
 
     // 状态信息
     restartFailed: 'Ошибка перезапуска',

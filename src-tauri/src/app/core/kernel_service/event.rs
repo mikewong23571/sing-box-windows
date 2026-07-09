@@ -22,8 +22,8 @@ pub(super) async fn start_websocket_relay(
 ) -> Result<(), String> {
     let port = api_port.ok_or("API端口参数是必需的，请从前端传递正确的端口配置")?;
 
-    SHOULD_STOP_EVENTS.store(false, Ordering::Relaxed);
     cleanup_event_relay_tasks().await;
+    SHOULD_STOP_EVENTS.store(false, Ordering::Relaxed);
 
     info!("?? 开始启动事件中继服务，端口: {}", port);
 

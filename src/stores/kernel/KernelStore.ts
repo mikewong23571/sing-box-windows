@@ -4,7 +4,11 @@ import { APP_EVENTS } from '@/constants/events'
 import { kernelService, type KernelStatus } from '@/services/kernel-service'
 import { useAppStore, type ProxyMode } from '../app/AppStore'
 import { eventService } from '@/services/event-service'
-import type { KernelFailurePayload, KernelReadinessSnapshot, StartupDiagnosis } from '@/types/events'
+import type {
+  KernelFailurePayload,
+  KernelReadinessSnapshot,
+  StartupDiagnosis,
+} from '@/types/events'
 
 const DEFAULT_STATUS: KernelStatus = {
   process_running: false,
@@ -147,6 +151,25 @@ export const useKernelStore = defineStore('kernel', () => {
     }
   }
 
+  const startKernel = async () => {
+    if (isLoading.value) return false
+    isLoading.value = true
+    try {
+      const result = await kernelService.startKernel()
+      if (!result.success) {
+        lastError.value = result.message
+        return false
+      }
+      await refreshStatus()
+      return true
+    } catch (error) {
+      lastError.value = error instanceof Error ? error.message : '内核启动失败'
+      return false
+    } finally {
+      isLoading.value = false
+    }
+  }
+
   const restartKernel = async () => {
     if (isLoading.value) return false
     isLoading.value = true
@@ -156,7 +179,7 @@ export const useKernelStore = defineStore('kernel', () => {
         lastError.value = result.message
         return false
       }
-      // await refreshStatus() // 移除主动刷新，依赖事件推送
+      await refreshStatus()
       return true
     } catch (error) {
       lastError.value = error instanceof Error ? error.message : '内核重启失败'
@@ -167,17 +190,21 @@ export const useKernelStore = defineStore('kernel', () => {
   }
 
   const stopKernel = async (options?: { force?: boolean }) => {
+    if (isLoading.value) return false
+    isLoading.value = true
     try {
       const result = await kernelService.stopKernel({ force: options?.force ?? false })
       if (!result.success) {
         lastError.value = result.message
         return false
       }
-      // await refreshStatus() // 移除主动刷新，依赖事件推送
+      await refreshStatus()
       return true
     } catch (error) {
       lastError.value = error instanceof Error ? error.message : '内核停止失败'
       return false
+    } finally {
+      isLoading.value = false
     }
   }
 
@@ -283,8 +310,12 @@ export const useKernelStore = defineStore('kernel', () => {
   const startupDiagnosisSummary = computed(
     () => startupDiagnosis.value?.message || startupDiagnosis.value?.detail || '',
   )
-  const isStarting = computed(() => isLoading.value && !isRunning.value)
-  const isStopping = computed(() => isLoading.value && isRunning.value)
+  const isStarting = computed(
+    () => status.value.kernel_state === 'starting' || (isLoading.value && !isRunning.value),
+  )
+  const isStopping = computed(
+    () => status.value.kernel_state === 'stopping' || (isLoading.value && isRunning.value),
+  )
   const uptime = computed(() => {
     const ms = status.value.uptime_ms || 0
     const seconds = Math.floor(ms / 1000)
@@ -317,6 +348,7 @@ export const useKernelStore = defineStore('kernel', () => {
     initializeStore,
     handleKernelFailureEvent,
     refreshStatus,
+    startKernel,
     restartKernel,
     stopKernel,
     switchProxyMode,

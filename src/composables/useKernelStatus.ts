@@ -4,7 +4,12 @@ import { useKernelStore } from '@/stores/kernel/KernelStore'
 
 type KernelStore = ReturnType<typeof useKernelStore>
 
-export type KernelStatusState = 'starting' | 'stopping' | 'running' | 'disconnected' | 'stopped'
+export type KernelStatusState =
+  | 'starting'
+  | 'stopping'
+  | 'running'
+  | 'disconnected'
+  | 'stopped'
   | 'failed'
   | 'crashed'
 
@@ -16,6 +21,8 @@ export const useKernelStatus = (store?: KernelStore) => {
   const { status, isRunning, isReady, isStarting, isStopping, isLoading } = storeToRefs(kernelStore)
 
   const statusState = computed<KernelStatusState>(() => {
+    if (status.value.kernel_state === 'starting') return 'starting'
+    if (status.value.kernel_state === 'stopping') return 'stopping'
     if (status.value.kernel_state === 'failed') return 'failed'
     if (status.value.kernel_state === 'crashed') return 'crashed'
 

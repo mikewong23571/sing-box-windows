@@ -171,14 +171,10 @@ pub async fn start_event_relay_with_retry(
     relay_type: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut retry_count = 0;
-    let max_retries = 8; // 增加重试次数
     let mut retry_delay = std::time::Duration::from_secs(1);
     let max_retry_delay = std::time::Duration::from_secs(10);
 
-    info!(
-        "🔌 开始启动{}事件中继器，最大重试次数: {}",
-        relay_type, max_retries
-    );
+    info!("🔌 开始启动{}事件中继器", relay_type);
 
     loop {
         match relay.start().await {
@@ -189,14 +185,6 @@ pub async fn start_event_relay_with_retry(
             Err(e) => {
                 retry_count += 1;
 
-                if retry_count >= max_retries {
-                    error!(
-                        "❌ {}事件中继器重试{}次后仍然失败: {}",
-                        relay_type, max_retries, e
-                    );
-                    break Err(e);
-                }
-
                 // 根据重试次数调整延迟时间，但不超过最大延迟
                 if retry_count <= 3 {
                     retry_delay = std::time::Duration::from_secs(retry_count as u64);
@@ -205,11 +193,10 @@ pub async fn start_event_relay_with_retry(
                 }
 
                 warn!(
-                    "⚠️ {}事件中继器失败，{}秒后重试 ({}/{}): {}",
+                    "⚠️ {}事件中继器失败，{}秒后重试 (第{}次): {}",
                     relay_type,
                     retry_delay.as_secs(),
                     retry_count,
-                    max_retries,
                     e
                 );
 

@@ -6,11 +6,11 @@ mod parser;
 use crate::app::constants::{messages, paths};
 use crate::app::core::kernel_auto_manage::auto_manage_with_saved_config;
 use crate::app::core::proxy_service::apply_proxy_runtime_state;
+use crate::app::runtime::config_update::apply_runtime_config_update;
 use crate::app::singbox::config_generator;
 use crate::app::singbox::settings_patch::apply_port_settings_only;
 use crate::app::storage::enhanced_storage_service::{
-    apply_runtime_config_update, db_get_app_config, db_get_subscriptions,
-    db_save_app_config_internal, db_save_subscriptions,
+    db_get_app_config, db_get_subscriptions, db_save_app_config_internal, db_save_subscriptions,
 };
 use crate::app::storage::state_model::AppConfig;
 use crate::utils::http_client;
@@ -75,13 +75,12 @@ struct SubscriptionFetchResult {
 const SUBSCRIPTION_USERINFO_COMPAT_UAS: [&str; 2] = ["clash.meta", "clash-verge/1.7.7"];
 
 fn normalized_active_config_path(path: &Option<String>) -> Option<&str> {
-    path.as_deref().map(str::trim).filter(|value| !value.is_empty())
+    path.as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
-fn active_config_change_requires_restart(
-    previous: &Option<String>,
-    next: &Option<String>,
-) -> bool {
+fn active_config_change_requires_restart(previous: &Option<String>, next: &Option<String>) -> bool {
     normalized_active_config_path(previous) != normalized_active_config_path(next)
 }
 

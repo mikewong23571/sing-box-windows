@@ -1,5 +1,5 @@
 <template>
-  <n-flex vertical size="large" style="height: 100%;" class="page-shell">
+  <n-flex vertical size="large" style="height: 100%" class="page-shell">
     <PageHeader :title="t('sub.title')" :subtitle="t('sub.subtitle')">
       <template #actions>
         <n-button type="primary" @click="showAddModal = true" round>
@@ -13,7 +13,13 @@
 
     <!-- Subscription List -->
     <div class="subscription-section">
-      <n-grid v-if="subStore.list.length > 0" responsive="screen" cols="1 s:2 m:2 l:3" :x-gap="16" :y-gap="16">
+      <n-grid
+        v-if="subStore.list.length > 0"
+        responsive="screen"
+        cols="1 s:2 m:2 l:3"
+        :x-gap="16"
+        :y-gap="16"
+      >
         <n-grid-item v-for="(item, index) in subStore.list" :key="index">
           <div :class="['sub-card', { active: subStore.activeIndex === index }]">
             <!-- Card Header -->
@@ -22,7 +28,9 @@
                 <n-icon size="18"><LinkOutline /></n-icon>
               </div>
               <div class="sub-header-info">
-                <n-ellipsis class="sub-name" :line-clamp="1" :title="item.name">{{ item.name }}</n-ellipsis>
+                <n-ellipsis class="sub-name" :line-clamp="1" :title="item.name">{{
+                  item.name
+                }}</n-ellipsis>
                 <div class="sub-badges">
                   <span class="badge badge-type">
                     {{ item.isManual ? t('sub.manual') : t('sub.urlSubscription') }}
@@ -30,13 +38,23 @@
                   <span v-if="subStore.activeIndex === index" class="badge badge-active">
                     <span class="badge-dot" />{{ t('sub.inUse') }}
                   </span>
-                  <span v-if="!item.isManual && (item.autoUpdateIntervalMinutes ?? DEFAULT_AUTO_UPDATE_MINUTES) > 0" class="badge badge-timer">
+                  <span
+                    v-if="
+                      !item.isManual &&
+                      (item.autoUpdateIntervalMinutes ?? DEFAULT_AUTO_UPDATE_MINUTES) > 0
+                    "
+                    class="badge badge-timer"
+                  >
                     <n-icon size="11"><TimerOutline /></n-icon>
                     {{ formatIntervalLabel(item.autoUpdateIntervalMinutes) }}
                   </span>
                 </div>
               </div>
-              <n-dropdown trigger="hover" placement="bottom-end" :options="getDropdownOptions(index)">
+              <n-dropdown
+                trigger="hover"
+                placement="bottom-end"
+                :options="getDropdownOptions(index)"
+              >
                 <n-button text class="more-btn">
                   <n-icon size="18"><EllipsisVerticalOutline /></n-icon>
                 </n-button>
@@ -74,7 +92,10 @@
                 <n-icon size="13" class="meta-icon"><CalendarOutline /></n-icon>
                 <span class="meta-text">{{ formatExpireTime(item.subscriptionExpire) }}</span>
               </div>
-              <div v-if="item.autoUpdateFailCount && item.autoUpdateFailCount > 0" class="meta-row warn">
+              <div
+                v-if="item.autoUpdateFailCount && item.autoUpdateFailCount > 0"
+                class="meta-row warn"
+              >
                 <n-icon size="13" class="meta-icon"><AlertCircleOutline /></n-icon>
                 <span class="meta-text">{{ formatAutoUpdateHealth(item) }}</span>
               </div>
@@ -149,7 +170,7 @@
             </n-form-item>
           </n-tab-pane>
           <n-tab-pane name="manual" :tab="t('sub.manualConfig')">
-            <n-form-item :label="t('sub.content')" path="manualContent">        
+            <n-form-item :label="t('sub.content')" path="manualContent">
               <n-input
                 v-model:value="formValue.manualContent"
                 type="textarea"
@@ -163,7 +184,7 @@
             </n-form-item>
           </n-tab-pane>
           <n-tab-pane name="uri" :tab="t('sub.uriList')">
-            <n-form-item :label="t('sub.uriContent')" path="uriContent">        
+            <n-form-item :label="t('sub.uriContent')" path="uriContent">
               <n-input
                 v-model:value="formValue.uriContent"
                 type="textarea"
@@ -178,13 +199,27 @@
           </n-tab-pane>
         </n-tabs>
 
-        <n-form-item v-if="activeTab !== 'uri'" :label="t('sub.useOriginalConfig')" path="useOriginalConfig">
+        <n-form-item
+          v-if="activeTab !== 'uri'"
+          :label="t('sub.useOriginalConfig')"
+          path="useOriginalConfig"
+        >
           <n-flex align="center" justify="space-between" style="width: 100%">
-            <n-text depth="3">{{ formValue.useOriginalConfig ? t('sub.useOriginal') : t('sub.useExtractedNodes') }}</n-text>
-            <n-switch v-model:value="formValue.useOriginalConfig" @update:value="markUseOriginalTouched" />
+            <n-text depth="3">{{
+              formValue.useOriginalConfig ? t('sub.useOriginal') : t('sub.useExtractedNodes')
+            }}</n-text>
+            <n-switch
+              v-model:value="formValue.useOriginalConfig"
+              @update:value="markUseOriginalTouched"
+            />
           </n-flex>
           <template #feedback>
-            <n-alert v-if="formValue.useOriginalConfig" type="warning" show-icon style="margin-top: 8px">
+            <n-alert
+              v-if="formValue.useOriginalConfig"
+              type="warning"
+              show-icon
+              style="margin-top: 8px"
+            >
               {{ t('sub.originalConfigWarning') }}
             </n-alert>
           </template>
@@ -284,7 +319,7 @@ import type { FormInst, FormRules, DropdownOption } from 'naive-ui'
 import PageHeader from '@/components/common/PageHeader.vue'
 
 defineOptions({
-  name: 'SubView'
+  name: 'SubView',
 })
 
 type Subscription = FrontendSubscription
@@ -340,24 +375,24 @@ const rules: FormRules = {
       required: true,
       message: t('sub.urlRequired'),
       trigger: 'blur',
-      validator: (rule, value) => activeTab.value === 'url' ? !!value : true
-    }
+      validator: (rule, value) => (activeTab.value === 'url' ? !!value : true),
+    },
   ],
   manualContent: [
     {
       required: true,
       message: t('sub.contentRequired'),
       trigger: 'blur',
-      validator: (rule, value) => activeTab.value === 'manual' ? !!value : true
-    }
+      validator: (rule, value) => (activeTab.value === 'manual' ? !!value : true),
+    },
   ],
   uriContent: [
     {
       required: true,
       message: t('sub.uriContentRequired'),
       trigger: 'blur',
-      validator: (rule, value) => activeTab.value === 'uri' ? !!value : true
-    }
+      validator: (rule, value) => (activeTab.value === 'uri' ? !!value : true),
+    },
   ],
 }
 
@@ -376,32 +411,35 @@ const getDropdownOptions = (index: number): DropdownOption[] => [
     label: t('sub.copyLink'),
     key: 'copy',
     icon: () => h('span', { class: 'icon' }, [h(CopyOutline)]),
-    props: { onClick: () => copyUrl(subStore.list[index].url) }
+    props: { onClick: () => copyUrl(subStore.list[index].url) },
   },
   {
     label: t('sub.edit'),
     key: 'edit',
     icon: () => h('span', { class: 'icon' }, [h(CreateOutline)]),
-    props: { onClick: () => handleEdit(index, subStore.list[index]) }
+    props: { onClick: () => handleEdit(index, subStore.list[index]) },
   },
   {
     label: t('sub.editConfig'),
     key: 'edit-config',
     icon: () => h('span', { class: 'icon' }, [h(CodeOutline)]),
     show: subStore.activeIndex === index,
-    props: { onClick: editCurrentConfig }
+    props: { onClick: editCurrentConfig },
   },
   {
     label: t('sub.refreshNow'),
     key: 'refresh',
     icon: () => h('span', { class: 'icon' }, [h(RefreshOutline)]),
-    props: { onClick: () => refreshSubscription(index, subStore.activeIndex === index && appStore.isRunning) }
+    props: {
+      onClick: () =>
+        refreshSubscription(index, subStore.activeIndex === index && appStore.isRunning),
+    },
   },
   {
     label: t('sub.rollback'),
     key: 'rollback',
     icon: () => h('span', { class: 'icon' }, [h(ArrowUndoOutline)]),
-    props: { onClick: () => rollbackSubscription(index) }
+    props: { onClick: () => rollbackSubscription(index) },
   },
   { type: 'divider', key: 'd1' },
   {
@@ -409,8 +447,8 @@ const getDropdownOptions = (index: number): DropdownOption[] => [
     key: 'delete',
     icon: () => h('span', { class: 'icon delete' }, [h(TrashOutline)]),
     disabled: subStore.activeIndex === index,
-    props: { onClick: () => deleteSubscription(index) }
-  }
+    props: { onClick: () => deleteSubscription(index) },
+  },
 ]
 
 const resetForm = () => {
@@ -596,15 +634,15 @@ const refreshSubscription = async (index: number, applyRuntime = false, silent =
     subStore.list[index].isLoading = true
     const savedResult = item.isManual
       ? await subscriptionService.addManualSubscription(
-        item.manualContent || '',
-        item.useOriginalConfig,
-        persistOptions,
-      )
+          item.manualContent || '',
+          item.useOriginalConfig,
+          persistOptions,
+        )
       : await subscriptionService.downloadSubscription(
-        item.url,
-        item.useOriginalConfig,
-        persistOptions,
-      )
+          item.url,
+          item.useOriginalConfig,
+          persistOptions,
+        )
 
     const savedPath = savedResult.configPath
     if (savedPath) {
@@ -625,7 +663,6 @@ const refreshSubscription = async (index: number, applyRuntime = false, silent =
     if (!silent) {
       message.success(applyRuntime ? t('sub.refreshAndApplied') : t('sub.refreshSuccess'))
     }
-
   } catch (error) {
     message.error(t('sub.refreshFailed') + error)
   } finally {
@@ -743,7 +780,10 @@ const getTrafficClass = (item: Subscription): string => {
 }
 
 const regenerateConfigFor = async (item: Subscription) => {
-  const persistOptions = { fileName: generateConfigFileName(item.name || 'sub'), applyRuntime: false }
+  const persistOptions = {
+    fileName: generateConfigFileName(item.name || 'sub'),
+    applyRuntime: false,
+  }
   if (item.isManual) {
     const content = item.manualContent?.trim() ?? ''
     if (!content) {
@@ -827,7 +867,6 @@ onMounted(() => {
 onUnmounted(() => {
   stopAutoUpdateLoop()
 })
-
 </script>
 
 <style scoped>
@@ -841,34 +880,35 @@ onUnmounted(() => {
 .subscription-section {
   flex: 1;
   overflow-y: auto;
+  padding: 2px 2px 10px;
 }
 
 /* ── Subscription Card ─────────────────────────────────── */
 .sub-card {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 18px 20px;
-  border-radius: var(--radius-lg);
-  border: 1.5px solid var(--border-light);
-  background: var(--glass-bg);
+  gap: 12px;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--panel-bg);
   backdrop-filter: var(--glass-blur);
   transition: all var(--transition-normal);
-  box-shadow: 0 2px 12px -4px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 10px -6px rgba(15, 23, 42, 0.18);
   height: 100%;
   box-sizing: border-box;
 }
 
 .sub-card:hover {
   border-color: var(--border-hover);
-  box-shadow: 0 6px 24px -6px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 8px 22px -12px rgba(15, 23, 42, 0.28);
   transform: translateY(-1px);
 }
 
 .sub-card.active {
-  border-color: var(--primary-color);
-  background: var(--bg-primary);
-  box-shadow: 0 6px 24px -6px rgba(99, 102, 241, 0.18);
+  border-color: rgba(16, 185, 129, 0.55);
+  background: rgba(16, 185, 129, 0.04);
+  box-shadow: 0 8px 24px -14px rgba(16, 185, 129, 0.35);
 }
 
 /* ── Card Header ───────────────────────────────────────── */
@@ -876,12 +916,13 @@ onUnmounted(() => {
   display: flex;
   align-items: flex-start;
   gap: 12px;
+  padding-bottom: 2px;
 }
 
 .sub-avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
   background: var(--bg-tertiary);
   display: flex;
   align-items: center;
@@ -893,7 +934,7 @@ onUnmounted(() => {
 }
 
 .sub-avatar.active {
-  background: var(--primary-color);
+  background: var(--success-color);
   color: #fff;
 }
 
@@ -1019,7 +1060,8 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 6px;
   padding: 10px 12px;
-  background: var(--bg-tertiary);
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid var(--border-light);
   border-radius: 8px;
   flex: 1;
 }

@@ -1,4 +1,4 @@
-﻿use crate::app::constants::common::messages;
+use crate::app::constants::common::messages;
 use crate::app::core::kernel_service::event::{
     cleanup_event_relay_tasks, start_websocket_relay, SHOULD_STOP_EVENTS,
 };
@@ -8,7 +8,7 @@ use crate::app::core::kernel_service::state::{KernelState, KERNEL_STATE};
 use crate::app::core::kernel_service::status::is_kernel_running;
 use crate::app::core::kernel_service::utils::{
     emit_kernel_error_with_context, emit_kernel_started, emit_kernel_starting, emit_kernel_status,
-    emit_kernel_stopped, KernelStatusPayload, resolve_config_path,
+    emit_kernel_stopped, resolve_config_path, KernelStatusPayload,
 };
 use crate::app::core::kernel_service::PROCESS_MANAGER;
 use crate::app::core::proxy_service::{
@@ -57,11 +57,20 @@ impl ResolvedProxyState {
 
 fn classify_startup_stability_failure(detail: &str) -> (&'static str, &'static str) {
     if detail.contains("API status") {
-        ("KERNEL_API_HTTP_ERROR", "kernel API returned error status code")
+        (
+            "KERNEL_API_HTTP_ERROR",
+            "kernel API returned error status code",
+        )
     } else if detail.contains("exited immediately") {
-        ("KERNEL_PROCESS_EXITED_EARLY", "kernel process exited shortly after startup")
+        (
+            "KERNEL_PROCESS_EXITED_EARLY",
+            "kernel process exited shortly after startup",
+        )
     } else {
-        ("KERNEL_API_TIMEOUT", "kernel API not ready within stability window")
+        (
+            "KERNEL_API_TIMEOUT",
+            "kernel API not ready within stability window",
+        )
     }
 }
 
@@ -309,23 +318,57 @@ pub async fn start_kernel_with_state(
 
     // 启动内核前检查磁盘日志大小，超过阈值则滚动，避免 sing-box.log 无限增长。
     {
-        let log_path = std::path::PathBuf::from(
-            crate::app::singbox::common::kernel_log_output_path(),
-        );
+        let log_path =
+            std::path::PathBuf::from(crate::app::singbox::common::kernel_log_output_path());
         crate::app::core::kernel_service::log_rotation::rotate_if_needed(&log_path);
     }
 
     if PROCESS_MANAGER.is_running().await {
         KERNEL_STATE.mark_running(resolved.api_port);
         KERNEL_STATE.update_readiness(|readiness| {
-            readiness.relay_ready = true;
+            readiness.relay_ready = false;
         });
+
+        if let Err(e) = verify_kernel_startup_stability(resolved.api_port).await {
+            warn!("内核已运行，但 API 稳定性校验失败: {}", e);
+            KERNEL_STATE.update_readiness(|readiness| {
+                readiness.api_ready = false;
+                readiness.relay_ready = false;
+            });
+            emit_kernel_status(&app_handle, &KernelStatusPayload::from_state());
+            return Ok(serde_json::json!({
+                "success": false,
+                "message": format!("内核已运行但 API 不可用: {}", e)
+            }));
+        }
+
+        match start_websocket_relay(app_handle.clone(), Some(resolved.api_port)).await {
+            Ok(_) => {
+                KERNEL_STATE.update_readiness(|readiness| {
+                    readiness.relay_ready = true;
+                });
+            }
+            Err(e) => {
+                warn!("内核已运行，但事件中继启动失败: {}", e);
+                KERNEL_STATE.update_readiness(|readiness| {
+                    readiness.relay_ready = false;
+                });
+            }
+        }
+
         enable_kernel_guard(
             app_handle.clone(),
             resolved.api_port,
             resolved.proxy.tun_enabled,
         )
         .await;
+        emit_kernel_started(
+            &app_handle,
+            &resolved.derived_mode(),
+            resolved.api_port,
+            resolved.proxy.proxy_port,
+            false,
+        );
         info!("内核已在运行中");
         return Ok(serde_json::json!({
             "success": true,

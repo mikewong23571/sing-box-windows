@@ -5,42 +5,70 @@
       <n-card class="page-hero" :class="statusClass">
         <n-flex justify="space-between" align="center">
           <n-flex align="center" :size="16">
-            <n-icon size="48" :class="{ 'pulse-active': kernelRunning }" :type="kernelRunning ? 'primary' : 'default'">
+            <n-icon
+              size="48"
+              :class="{ 'pulse-active': kernelRunning }"
+              :type="kernelRunning ? 'primary' : 'default'"
+            >
               <PlanetOutline v-if="kernelRunning" />
               <CloudOfflineOutline v-else />
             </n-icon>
             <n-flex vertical :size="0">
-              <n-text style="font-size: 24px; font-weight: bold;">{{ statusTitle }}</n-text>
+              <n-text style="font-size: 24px; font-weight: bold">{{ statusTitle }}</n-text>
               <n-space align="center" :size="8">
-                <span class="status-dot" :class="{ 'running': kernelRunning }"></span>
+                <span class="status-dot" :class="{ running: kernelRunning }"></span>
                 <n-text depth="3">{{ appStatusLabel }}</n-text>
               </n-space>
             </n-flex>
           </n-flex>
-          
+
           <n-space>
             <n-button
-              :type="kernelRunning ? 'error' : 'primary'"
+              v-if="!kernelRunning"
+              type="primary"
               size="large"
               round
-              :loading="kernelLoading"
+              :loading="kernelBusy"
+              @click="startKernel"
+            >
+              <template #icon>
+                <n-icon><PlayOutline /></n-icon>
+              </template>
+              {{ t('home.start') }}
+            </n-button>
+
+            <n-button
+              v-else
+              type="error"
+              size="large"
+              round
+              secondary
+              :loading="kernelBusy"
+              @click="stopKernel"
+            >
+              <template #icon>
+                <n-icon><StopOutline /></n-icon>
+              </template>
+              {{ t('home.stop') }}
+            </n-button>
+
+            <n-button
+              type="primary"
+              size="large"
+              round
+              secondary
+              :loading="kernelBusy"
               @click="restartKernel"
             >
               <template #icon>
-                <n-icon><PowerOutline /></n-icon>
+                <n-icon><RefreshOutline /></n-icon>
               </template>
               {{ t('home.restart') }}
             </n-button>
-            
+
             <n-tooltip v-if="isWindowsPlatform && !isAdmin" trigger="hover">
               <template #trigger>
-                <n-button
-                  size="large"
-                  round
-                  secondary
-                  type="warning"
-                  @click="restartAsAdmin"
-                >
+                <n-button size="large" round secondary type="warning" @click="restartAsAdmin">
                   <template #icon>
                     <n-icon><ShieldCheckmarkOutline /></n-icon>
                   </template>
@@ -52,23 +80,34 @@
         </n-flex>
 
         <!-- Quick Stats in Hero (Only visible when running) -->
-        <n-grid v-if="kernelRunning" responsive="screen" cols="1 s:2 m:3" :x-gap="16" :y-gap="16" style="margin-top: 24px;">
+        <n-grid
+          v-if="kernelRunning"
+          responsive="screen"
+          cols="1 s:2 m:3"
+          :x-gap="16"
+          :y-gap="16"
+          style="margin-top: 24px"
+        >
           <n-grid-item>
             <n-card size="small">
               <n-statistic :label="t('home.traffic.up') + ' / ' + t('home.traffic.down')">
                 <template #prefix>
                   <n-icon color="#2080f0"><SwapVerticalOutline /></n-icon>
                 </template>
-                <n-text style="font-size: 16px;">
-                  {{ formatSpeed(trafficStore.traffic.up) }} / {{ formatSpeed(trafficStore.traffic.down) }}
+                <n-text style="font-size: 16px">
+                  {{ formatSpeed(trafficStore.traffic.up) }} /
+                  {{ formatSpeed(trafficStore.traffic.down) }}
                 </n-text>
               </n-statistic>
             </n-card>
           </n-grid-item>
-          
+
           <n-grid-item>
             <n-card size="small">
-              <n-statistic :label="t('nav.connections')" :value="connectionStore.connections.length">
+              <n-statistic
+                :label="t('nav.connections')"
+                :value="connectionStore.connections.length"
+              >
                 <template #prefix>
                   <n-icon color="#d03050"><GitNetworkOutline /></n-icon>
                 </template>
@@ -82,8 +121,12 @@
                 <template #prefix>
                   <n-icon color="#8a2be2"><GlobeOutline /></n-icon>
                 </template>
-                <n-text style="font-size: 16px;">
-                  {{ currentNodeProxyMode === 'global' ? t('home.nodeMode.global') : t('home.nodeMode.rule') }}
+                <n-text style="font-size: 16px">
+                  {{
+                    currentNodeProxyMode === 'global'
+                      ? t('home.nodeMode.global')
+                      : t('home.nodeMode.rule')
+                  }}
                 </n-text>
               </n-statistic>
             </n-card>
@@ -105,7 +148,7 @@
           <n-text>{{ kernelStore.startupDiagnosis.detail }}</n-text>
           <ul
             v-if="kernelStore.startupDiagnosis.suggested_actions?.length"
-            style="margin: 0; padding-left: 20px;"
+            style="margin: 0; padding-left: 20px"
           >
             <li v-for="action in kernelStore.startupDiagnosis.suggested_actions" :key="action">
               {{ action }}
@@ -118,15 +161,46 @@
       <n-grid responsive="screen" cols="1 l:3" :x-gap="24" :y-gap="24">
         <!-- Traffic Chart -->
         <n-grid-item span="1 l:2">
-          <n-card :title="t('home.traffic.total') + ': ' + formatBytes(trafficStore.traffic.totalUp + trafficStore.traffic.totalDown)">
+          <n-card
+            :title="
+              t('home.traffic.total') +
+              ': ' +
+              formatBytes(trafficStore.traffic.totalUp + trafficStore.traffic.totalDown)
+            "
+          >
             <template #header-extra>
-              <div style="display: flex; gap: 16px; font-size: 12px; font-weight: 600; align-items: center; color: var(--text-primary);">
-                <div style="display: flex; align-items: center; gap: 6px;">
-                  <div style="width: 8px; height: 8px; border-radius: 50%; background-color: var(--success-color); box-shadow: 0 0 8px var(--success-color);"></div>
+              <div
+                style="
+                  display: flex;
+                  gap: 16px;
+                  font-size: 12px;
+                  font-weight: 600;
+                  align-items: center;
+                  color: var(--text-primary);
+                "
+              >
+                <div style="display: flex; align-items: center; gap: 6px">
+                  <div
+                    style="
+                      width: 8px;
+                      height: 8px;
+                      border-radius: 50%;
+                      background-color: var(--success-color);
+                      box-shadow: 0 0 8px var(--success-color);
+                    "
+                  ></div>
                   <span>{{ t('home.traffic.uploadSpeed') }}</span>
                 </div>
-                <div style="display: flex; align-items: center; gap: 6px;">
-                  <div style="width: 8px; height: 8px; border-radius: 50%; background-color: var(--primary-color); box-shadow: 0 0 8px var(--primary-color);"></div>
+                <div style="display: flex; align-items: center; gap: 6px">
+                  <div
+                    style="
+                      width: 8px;
+                      height: 8px;
+                      border-radius: 50%;
+                      background-color: var(--primary-color);
+                      box-shadow: 0 0 8px var(--primary-color);
+                    "
+                  ></div>
                   <span>{{ t('home.traffic.downloadSpeed') }}</span>
                 </div>
               </div>
@@ -146,49 +220,69 @@
               <template #header>
                 <n-flex justify="space-between" align="center">
                   <span>{{ t('home.proxyHeader.flowMode') }}</span>
-                  <n-button size="small" secondary round type="primary" @click="showPortModal = true">
-                    <template #icon><n-icon><SettingsOutline/></n-icon></template>
+                  <n-button
+                    size="small"
+                    secondary
+                    round
+                    type="primary"
+                    @click="showPortModal = true"
+                  >
+                    <template #icon
+                      ><n-icon><SettingsOutline /></n-icon
+                    ></template>
                     {{ t('common.edit') }}
                   </n-button>
                 </n-flex>
               </template>
-              
+
               <n-flex vertical size="large">
                 <n-flex justify="space-between" align="center" :wrap="false">
                   <n-flex align="center" :size="12" :wrap="false">
                     <n-icon size="24"><DesktopOutline /></n-icon>
                     <n-flex vertical :size="0">
                       <n-text strong>{{ t('home.proxyMode.system') }}</n-text>
-                      <n-text depth="3" style="font-size: 12px; min-height: 18px;">{{ proxyAddress || t('common.disabled') }}</n-text>
+                      <n-text depth="3" style="font-size: 12px; min-height: 18px">{{
+                        proxyAddress || t('common.disabled')
+                      }}</n-text>
                     </n-flex>
                   </n-flex>
-                  <n-switch :value="systemProxyEnabled" :disabled="modeSwitchPending" @update:value="(v: boolean) => toggleSystemProxy(v)" />
+                  <n-switch
+                    :value="systemProxyEnabled"
+                    :disabled="modeSwitchPending"
+                    @update:value="(v: boolean) => toggleSystemProxy(v)"
+                  />
                 </n-flex>
-                
+
                 <n-flex justify="space-between" align="center" :wrap="false">
                   <n-flex align="center" :size="12" :wrap="false">
                     <n-icon size="24"><FlashOutline /></n-icon>
                     <n-flex vertical :size="0">
                       <n-text strong>{{ t('home.proxyMode.tun') }}</n-text>
-                      <n-text depth="3" style="font-size: 12px; min-height: 18px;">{{ t('home.proxyMode.tunTip') }}</n-text>
+                      <n-text depth="3" style="font-size: 12px; min-height: 18px">{{
+                        t('home.proxyMode.tunTip')
+                      }}</n-text>
                     </n-flex>
                   </n-flex>
-                  <n-switch :value="tunProxyEnabled" :disabled="modeSwitchPending" @update:value="(v: boolean) => toggleTunProxy(v)" />
+                  <n-switch
+                    :value="tunProxyEnabled"
+                    :disabled="modeSwitchPending"
+                    @update:value="(v: boolean) => toggleTunProxy(v)"
+                  />
                 </n-flex>
               </n-flex>
             </n-card>
 
             <!-- Node Mode Panel -->
             <n-card :title="t('home.proxyHeader.nodeMode')">
-              <n-tabs type="segment" :value="currentNodeProxyMode" @update:value="handleNodeProxyModeChange">
-                <n-tab
-                  v-for="mode in nodeProxyModes"
-                  :key="mode.value"
-                  :name="mode.value"
-                >
-                  <div style="display: flex; align-items: center; gap: 6px;">
-                    <n-icon :size="18" style="display: flex;"><component :is="mode.icon" /></n-icon>
-                    <span style="line-height: 1;">{{ t(mode.nameKey) }}</span>
+              <n-tabs
+                type="segment"
+                :value="currentNodeProxyMode"
+                @update:value="handleNodeProxyModeChange"
+              >
+                <n-tab v-for="mode in nodeProxyModes" :key="mode.value" :name="mode.value">
+                  <div style="display: flex; align-items: center; gap: 6px">
+                    <n-icon :size="18" style="display: flex"><component :is="mode.icon" /></n-icon>
+                    <span style="line-height: 1">{{ t(mode.nameKey) }}</span>
                   </div>
                 </n-tab>
               </n-tabs>
@@ -208,7 +302,9 @@ import { computed, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDialog, useMessage, type DialogReactive } from 'naive-ui'
 import {
-  PowerOutline,
+  PlayOutline,
+  StopOutline,
+  RefreshOutline,
   ShieldCheckmarkOutline,
   GlobeOutline,
   FlashOutline,
@@ -218,7 +314,7 @@ import {
   SwapVerticalOutline,
   GitNetworkOutline,
   SettingsOutline,
-  DesktopOutline
+  DesktopOutline,
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores'
 import { useKernelStore } from '@/stores/kernel/KernelStore'
@@ -264,6 +360,9 @@ const showPortModal = ref(false)
 
 const isWindowsPlatform = computed(() => platform.value === 'windows')
 const isUnixPlatform = computed(() => platform.value === 'linux' || platform.value === 'macos')
+const kernelBusy = computed(
+  () => kernelLoading.value || statusState.value === 'starting' || statusState.value === 'stopping',
+)
 
 const statusTitle = computed(() => {
   switch (statusState.value) {
@@ -331,8 +430,7 @@ const syncCurrentNodeProxyMode = async () => {
     if (mode === 'global' || mode === 'rule') {
       currentNodeProxyMode.value = mode
     }
-  } catch {
-  }
+  } catch {}
 }
 
 const toggleSystemProxy = async (value: boolean) => {
@@ -509,7 +607,7 @@ const toggleTunProxy = async (value: boolean) => {
 }
 
 const restartKernel = async () => {
-  if (kernelLoading.value) return
+  if (kernelBusy.value) return
 
   try {
     const result = await kernelStore.restartKernel()
@@ -520,6 +618,36 @@ const restartKernel = async () => {
     }
   } catch (error) {
     message.error(t('home.restartFailed'))
+  }
+}
+
+const startKernel = async () => {
+  if (kernelBusy.value) return
+
+  try {
+    const result = await kernelStore.startKernel()
+    if (result) {
+      message.success(t('home.startSuccess'))
+    } else {
+      message.error(getKernelFailureText(t('home.startFailed')))
+    }
+  } catch (error) {
+    message.error(t('home.startFailed'))
+  }
+}
+
+const stopKernel = async () => {
+  if (kernelBusy.value) return
+
+  try {
+    const result = await kernelStore.stopKernel()
+    if (result) {
+      message.success(t('home.stopSuccess'))
+    } else {
+      message.error(getKernelFailureText(t('home.stopFailed')))
+    }
+  } catch (error) {
+    message.error(t('home.stopFailed'))
   }
 }
 
@@ -627,9 +755,18 @@ onMounted(async () => {
 
 /* Animations */
 @keyframes pulse-icon {
-  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-  70% { transform: scale(1.05); box-shadow: 0 0 0 15px rgba(16, 185, 129, 0); }
-  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  }
+  70% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 15px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
 }
 
 .pulse-active {
@@ -654,9 +791,21 @@ onMounted(async () => {
   background: var(--text-tertiary);
 }
 
-.running .status-dot { background: var(--success-color); box-shadow: 0 0 8px var(--success-color); }
-.pending .status-dot, .disconnected .status-dot { background: var(--warning-color); box-shadow: 0 0 8px var(--warning-color); }
-.stopped .status-dot, .failed .status-dot, .crashed .status-dot { background: var(--error-color); box-shadow: 0 0 8px var(--error-color); }
+.running .status-dot {
+  background: var(--success-color);
+  box-shadow: 0 0 8px var(--success-color);
+}
+.pending .status-dot,
+.disconnected .status-dot {
+  background: var(--warning-color);
+  box-shadow: 0 0 8px var(--warning-color);
+}
+.stopped .status-dot,
+.failed .status-dot,
+.crashed .status-dot {
+  background: var(--error-color);
+  box-shadow: 0 0 8px var(--error-color);
+}
 
 .speed-separator {
   color: var(--text-tertiary);

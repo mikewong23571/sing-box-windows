@@ -6,13 +6,14 @@ use std::error::Error;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tauri::AppHandle;
 use tracing::{error, info, warn};
 
 pub async fn toggle_proxy_mode_impl(app_handle: AppHandle, mode: String) -> Result<String, String> {
-    if !["global", "rule"].contains(&mode.as_str()) {
-        return Err(format!("无效的代理模式: {}", mode));
-    }
+    let mode = normalize_proxy_mode(&mode)
+        .ok_or_else(|| format!("无效的代理模式: {}", mode))?
+        .to_string();
 
     info!("正在切换代理模式为: {}", mode);
 
@@ -168,13 +169,29 @@ fn read_proxy_mode_from_config(config_path: &Path) -> Result<String, Box<dyn Err
         if let Some(clash_api) = experimental.get("clash_api") {
             if let Some(default_mode) = clash_api.get("default_mode") {
                 if let Some(mode) = default_mode.as_str() {
-                    return Ok(mode.to_string());
+                    return Ok(normalize_proxy_mode(mode).unwrap_or("rule").to_string());
                 }
             }
         }
     }
 
     Ok("rule".to_string())
+}
+
+fn normalize_proxy_mode(mode: &str) -> Option<&'static str> {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "global" => Some("global"),
+        "rule" => Some("rule"),
+        _ => None,
+    }
+}
+
+fn clash_api_mode_alias(mode: &str) -> Option<&'static str> {
+    match normalize_proxy_mode(mode)? {
+        "global" => Some("Global"),
+        "rule" => Some("Rule"),
+        _ => None,
+    }
 }
 
 fn resolve_proxy_mode_config_path(active_config_path: Option<&str>) -> PathBuf {
@@ -255,6 +272,7 @@ fn collect_proxy_mode_api_ports(
 async fn query_clash_api_mode(api_port: u16) -> Result<String, String> {
     let response = http_client::get_client()
         .get(format!("http://127.0.0.1:{api_port}/configs"))
+        .timeout(Duration::from_secs(5))
         .send()
         .await
         .map_err(|e| format!("请求 Clash API 失败: {}", e))?
@@ -269,14 +287,36 @@ async fn query_clash_api_mode(api_port: u16) -> Result<String, String> {
     payload
         .get("mode")
         .and_then(|value| value.as_str())
+        .and_then(normalize_proxy_mode)
         .map(str::to_string)
         .ok_or_else(|| "Clash API 响应中缺少 mode 字段".to_string())
 }
 
 async fn patch_clash_api_mode(api_port: u16, mode: &str) -> Result<(), String> {
+    let normalized =
+        normalize_proxy_mode(mode).ok_or_else(|| format!("无效的代理模式: {}", mode))?;
+    let alias = clash_api_mode_alias(normalized).unwrap_or(normalized);
+
+    match patch_clash_api_mode_once(api_port, normalized).await {
+        Ok(()) => Ok(()),
+        Err(first_error) if alias != normalized => {
+            warn!(
+                "使用小写模式同步失败(port={})，尝试兼容格式 {}: {}",
+                api_port, alias, first_error
+            );
+            patch_clash_api_mode_once(api_port, alias)
+                .await
+                .map_err(|second_error| format!("{}; {}", first_error, second_error))
+        }
+        Err(first_error) => Err(first_error),
+    }
+}
+
+async fn patch_clash_api_mode_once(api_port: u16, mode: &str) -> Result<(), String> {
     http_client::get_client()
         .patch(format!("http://127.0.0.1:{api_port}/configs"))
         .json(&json!({ "mode": mode }))
+        .timeout(Duration::from_secs(5))
         .send()
         .await
         .map_err(|e| format!("请求 Clash API 失败: {}", e))?

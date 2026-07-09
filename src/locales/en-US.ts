@@ -48,6 +48,10 @@ export default {
     stop: 'Stop',
     restart: 'Restart',
     restartAsAdmin: 'Restart as Admin',
+    startSuccess: 'Kernel started successfully.',
+    startFailed: 'Start failed',
+    stopSuccess: 'Kernel stopped.',
+    stopFailed: 'Stop failed',
     restartFailed: 'Restart failed',
     nodeModeChangeSuccess: 'Node mode changed successfully',
     nodeModeChangeFailed: 'Node mode change failed',
@@ -401,7 +405,8 @@ export default {
     manualContent: 'Manual Configuration Content',
     urlHint: 'Supports sing-box JSON, Clash(Mihomo) YAML, and URI lists (Base64 supported)',
     manualHint: 'sing-box JSON only. Defaults to original config and only replaces ports',
-    uriHint: 'Supports vmess/vless/trojan/ss/hysteria2/tuic/anytls (one per line) or Clash/Mihomo YAML',
+    uriHint:
+      'Supports vmess/vless/trojan/ss/hysteria2/tuic/anytls (one per line) or Clash/Mihomo YAML',
     autoUpdate: 'Auto Update',
     autoUpdateManualHint: 'Manual content does not support auto update',
     autoUpdateOff: 'Disable auto update',
@@ -685,7 +690,8 @@ export default {
       openDevtoolsDesc: 'Open browser developer tools for debugging and inspecting frontend code',
       open: 'Open',
       opened: 'DevTools Opened',
-      warning: 'DevTools are primarily for development and debugging, no need to open for normal use',
+      warning:
+        'DevTools are primarily for development and debugging, no need to open for normal use',
     },
     extra: {
       dashboardTitle: 'Dashboard & List Preferences',
@@ -698,7 +704,8 @@ export default {
       latencyUrl: 'Latency URL',
       logRetentionPrefs: 'Log Retention',
       logMaxRows: 'Maximum log rows',
-      logRetentionHint: 'Controls only the number of log rows shown in the UI. The on-disk sing-box.log is rotated automatically on kernel start (kept to last 3 files after 10MB).',
+      logRetentionHint:
+        'Controls only the number of log rows shown in the UI. The on-disk sing-box.log is rotated automatically on kernel start (kept to last 3 files after 10MB).',
       ordering: {
         natural: 'Natural',
         latency: 'Latency',

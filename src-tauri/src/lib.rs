@@ -200,7 +200,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Enhanced Storage service commands (数据库)
             crate::app::storage::enhanced_storage_service::db_get_app_config,
-            crate::app::storage::enhanced_storage_service::db_save_app_config,
+            crate::app::runtime::app_config_commands::db_save_app_config,
             crate::app::storage::enhanced_storage_service::db_get_theme_config,
             crate::app::storage::enhanced_storage_service::db_save_theme_config,
             crate::app::storage::enhanced_storage_service::db_get_locale_config,
@@ -212,7 +212,7 @@ pub fn run() {
             crate::app::storage::enhanced_storage_service::db_get_subscriptions,
             crate::app::storage::enhanced_storage_service::db_save_subscriptions,
             crate::app::storage::enhanced_storage_service::db_get_active_subscription_index,
-            crate::app::storage::enhanced_storage_service::db_save_active_subscription_index,
+            crate::app::runtime::app_config_commands::db_save_active_subscription_index,
             // Core - Kernel service commands (legacy)
             // Core - Kernel service commands (legacy)
             crate::app::core::kernel_service::download::download_kernel,

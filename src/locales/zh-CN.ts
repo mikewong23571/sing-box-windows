@@ -48,6 +48,10 @@ export default {
     stop: '停止',
     restart: '重启',
     restartAsAdmin: '以管理员重启',
+    startSuccess: '内核启动成功。',
+    startFailed: '启动失败',
+    stopSuccess: '内核已停止。',
+    stopFailed: '停止失败',
     restartFailed: '重启失败',
     nodeModeChangeSuccess: '节点模式切换成功',
     nodeModeChangeFailed: '节点模式切换失败',
@@ -691,7 +695,8 @@ export default {
       latencyUrl: '测速 URL',
       logRetentionPrefs: '日志保留',
       logMaxRows: '最大日志条数',
-      logRetentionHint: '仅控制前端界面展示的日志条数；磁盘上的 sing-box.log 由内核启动时自动滚动（超过 10MB 保留最近 3 份）。',
+      logRetentionHint:
+        '仅控制前端界面展示的日志条数；磁盘上的 sing-box.log 由内核启动时自动滚动（超过 10MB 保留最近 3 份）。',
       ordering: {
         natural: '原始顺序',
         latency: '按延迟',
