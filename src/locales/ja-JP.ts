@@ -360,6 +360,7 @@ export default {
     readConfigFailed: '設定の読み込みに失敗しました: ',
     configSaved: '設定が保存され適用されました',
     saveConfigFailed: '設定の保存に失敗しました: ',
+    invalidJson: 'JSON 形式が正しくありません。修正してから保存してください',
     useOriginal: '元の設定で実行',
     useOriginalConfig: '元の設定を使用（ポートのみ置換）',
     useExtractedNodes: 'ノードをローカルテンプレートに抽出',
@@ -471,6 +472,26 @@ export default {
       restartDesc: 'ポート変更後、カーネルの再起動が必要です',
       portChanged: 'ポート設定が変更されました',
       portChangeSuccess: 'ポート設定が正常に更新されました',
+      sections: {
+        inbound: '受信とリスナー',
+        systemProxy: 'システムプロキシ',
+        tun: 'TUN 仮想アダプター',
+        dns: 'DNS',
+        routing: 'ルーティング',
+      },
+      badge: {
+        subscriptionProfile: 'サブスクリプション',
+        runtime: 'ランタイム',
+      },
+      hint: {
+        originalConfig:
+          '現在のサブスクリプションは元の設定を使用しています。以下の「サブスクリプション」項目は書き込まれず、新規生成時のみ有効です。',
+      },
+      currentConfig: '現在の有効設定',
+      currentConfigDesc: 'カーネルが現在使用している sing-box 設定を確認し、変更が反映されるかを照合できます。',
+      viewCurrentConfig: '設定を確認',
+      currentConfigDialogTitle: '現在の有効設定（読み取り専用）',
+      currentConfigLoadFailed: '現在の設定の読み込みに失敗しました',
     },
 
     // 更新设置

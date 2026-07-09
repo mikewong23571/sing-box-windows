@@ -94,7 +94,7 @@
                 <template #prefix>
                   <n-icon color="#2080f0"><SwapVerticalOutline /></n-icon>
                 </template>
-                <n-text style="font-size: 16px">
+                <n-text class="speed-statistic-value">
                   {{ formatSpeed(trafficStore.traffic.up) }} /
                   {{ formatSpeed(trafficStore.traffic.down) }}
                 </n-text>
@@ -811,6 +811,17 @@ onMounted(async () => {
   color: var(--text-tertiary);
   margin: 0 4px;
   font-weight: 400;
+}
+
+.speed-statistic-value {
+  display: inline-block;
+  font-size: 16px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 /* Main Grid Layout */

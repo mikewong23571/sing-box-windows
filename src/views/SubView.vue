@@ -253,17 +253,15 @@
       v-model:show="showConfigModal"
       preset="dialog"
       :title="t('sub.editCurrentConfig')"
-      class="modern-modal"
+      class="modern-modal config-editor-modal"
       :style="{ width: '800px' }"
       :mask-closable="false"
     >
-      <n-input
-        v-model:value="currentConfig"
-        type="textarea"
-        :rows="20"
-        class="code-input"
-        placeholder="JSON Config..."
-      />
+      <ConfigEditor v-model="currentConfig" />
+      <div v-if="configFormatError" class="config-format-error">
+        <n-icon :size="16" color="#d03050"><AlertCircleOutline /></n-icon>
+        <span>{{ configFormatError }}</span>
+      </div>
       <template #action>
         <n-space justify="end">
           <n-button @click="showConfigModal = false">{{ t('common.cancel') }}</n-button>
@@ -317,6 +315,7 @@ import {
 } from '@vicons/ionicons5'
 import type { FormInst, FormRules, DropdownOption } from 'naive-ui'
 import PageHeader from '@/components/common/PageHeader.vue'
+import ConfigEditor from '@/components/common/ConfigEditor.vue'
 
 defineOptions({
   name: 'SubView',
@@ -343,6 +342,7 @@ const useOriginalTouched = ref(false)
 const showConfigModal = ref(false)
 const currentConfig = ref('')
 const isConfigLoading = ref(false)
+const configFormatError = ref('')
 
 const formValue = ref<SubscriptionForm>({
   name: '',
@@ -804,9 +804,30 @@ const regenerateConfigFor = async (item: Subscription) => {
   return result.configPath
 }
 
+const detectConfigFormat = (content: string): 'json' | 'yaml' | 'text' => {
+  const trimmed = content.trim()
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return 'json'
+  if (/^([a-zA-Z_][a-zA-Z0-9_-]*:\s|---\s*$)/m.test(trimmed)) return 'yaml'
+  return 'text'
+}
+
+const validateConfigFormat = (content: string): string => {
+  const format = detectConfigFormat(content)
+  if (format === 'json') {
+    try {
+      JSON.parse(content)
+      return ''
+    } catch (error) {
+      return error instanceof Error ? error.message : t('sub.invalidJson')
+    }
+  }
+  return ''
+}
+
 const editCurrentConfig = async () => {
   try {
     isConfigLoading.value = true
+    configFormatError.value = ''
     const config = await subscriptionService.getCurrentConfig()
     if (typeof config === 'string') {
       currentConfig.value = config
@@ -820,6 +841,12 @@ const editCurrentConfig = async () => {
 }
 
 const saveCurrentConfig = async () => {
+  const formatError = validateConfigFormat(currentConfig.value)
+  if (formatError) {
+    configFormatError.value = formatError
+    return
+  }
+
   try {
     isConfigLoading.value = true
     const activeItem = subStore.getActiveSubscription()
@@ -1114,6 +1141,24 @@ onUnmounted(() => {
 
 .code-input {
   font-family: 'JetBrains Mono', monospace;
+}
+
+.config-editor-modal :deep(.n-dialog__content) {
+  padding-bottom: 8px;
+}
+
+.config-format-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(208, 48, 80, 0.08);
+  border: 1px solid rgba(208, 48, 80, 0.15);
+  color: #d03050;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 /* Dropdown Icon Styles */

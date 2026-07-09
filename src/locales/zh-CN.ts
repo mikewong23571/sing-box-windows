@@ -386,6 +386,7 @@ export default {
     readConfigFailed: '读取配置失败: ',
     configSaved: '配置已保存并应用',
     saveConfigFailed: '保存配置失败: ',
+    invalidJson: 'JSON 格式错误，请检查后再保存',
     useOriginal: '按原始配置运行',
     useOriginalConfig: '使用原始配置（仅替换端口）',
     useExtractedNodes: '提取节点到本地模板',
@@ -480,6 +481,26 @@ export default {
       restartDesc: '端口更改后需要重启内核才能生效',
       portChanged: '端口设置已更改',
       portChangeSuccess: '端口配置已成功更新',
+      sections: {
+        inbound: '入站与监听',
+        systemProxy: '系统代理',
+        tun: 'TUN 虚拟网卡',
+        dns: 'DNS',
+        routing: '路由',
+      },
+      badge: {
+        subscriptionProfile: '订阅配置',
+        runtime: '运行时',
+      },
+      hint: {
+        originalConfig:
+          '当前订阅使用原始配置，下方“订阅配置”项不会写入该订阅，仅在生成新配置时生效。',
+      },
+      currentConfig: '当前生效配置',
+      currentConfigDesc: '查看当前内核正在使用的 sing-box 配置原文，便于核对修改是否生效。',
+      viewCurrentConfig: '查看配置',
+      currentConfigDialogTitle: '当前生效配置（只读）',
+      currentConfigLoadFailed: '加载当前配置失败',
     },
     update: {
       title: '更新设置',

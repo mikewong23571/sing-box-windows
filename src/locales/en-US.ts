@@ -388,6 +388,7 @@ export default {
     readConfigFailed: 'Failed to read configuration: ',
     configSaved: 'Configuration saved and applied',
     saveConfigFailed: 'Failed to save configuration: ',
+    invalidJson: 'Invalid JSON format, please fix before saving',
     useOriginal: 'Run original config',
     useOriginalConfig: 'Use original config (ports only)',
     useExtractedNodes: 'Extract nodes to local template',
@@ -484,6 +485,26 @@ export default {
       restartDesc: 'Kernel restart required after port changes to take effect',
       portChanged: 'Port settings changed',
       portChangeSuccess: 'Port configuration updated successfully',
+      sections: {
+        inbound: 'Inbound & Listener',
+        systemProxy: 'System Proxy',
+        tun: 'TUN Interface',
+        dns: 'DNS',
+        routing: 'Routing',
+      },
+      badge: {
+        subscriptionProfile: 'Subscription',
+        runtime: 'Runtime',
+      },
+      hint: {
+        originalConfig:
+          'The active subscription uses its original config. The “Subscription” options below will not be written into it and only apply when generating a new config.',
+      },
+      currentConfig: 'Current Active Config',
+      currentConfigDesc: 'View the sing-box config currently used by the kernel to verify whether your changes take effect.',
+      viewCurrentConfig: 'View Config',
+      currentConfigDialogTitle: 'Current Active Config (Read-only)',
+      currentConfigLoadFailed: 'Failed to load current config',
     },
     update: {
       title: 'Update Settings',
