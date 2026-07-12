@@ -1,5 +1,6 @@
 use crate::app::constants::paths;
 use crate::app::core::kernel_service::event::start_websocket_relay;
+use crate::app::core::kernel_service::orchestrator::execute_kernel_operation;
 use crate::app::core::kernel_service::state::KERNEL_STATE;
 use crate::app::core::kernel_service::status::is_kernel_running;
 use crate::app::core::kernel_service::utils::{
@@ -8,6 +9,8 @@ use crate::app::core::kernel_service::utils::{
 };
 use crate::app::core::kernel_service::{KernelProcessControl, PROCESS_MANAGER};
 use crate::app::storage::enhanced_storage_service::db_get_app_config;
+use futures::FutureExt;
+use serde_json::json;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,33 +38,33 @@ const GUARD_TICK_DEFAULT_SECS: u64 = 8;
 
 /// 测试用：调整守护循环间隔（0 会按 1 秒下限处理，避免忙等）。
 #[allow(dead_code)]
-#[cfg(feature = "test-util")]
+#[cfg(any(test, feature = "test-util"))]
 pub(crate) fn set_guard_tick_secs_for_tests(secs: u64) {
     GUARD_TICK_SECS.store(secs, Ordering::Relaxed);
 }
 
 #[allow(dead_code)]
-#[cfg(feature = "test-util")]
+#[cfg(any(test, feature = "test-util"))]
 pub(crate) fn reset_guard_tick_secs_for_tests() {
     GUARD_TICK_SECS.store(GUARD_TICK_DEFAULT_SECS, Ordering::Relaxed);
 }
 
 /// 测试用：压低 TUN 自愈 warmup（秒）。
 #[allow(dead_code)]
-#[cfg(feature = "test-util")]
+#[cfg(any(test, feature = "test-util"))]
 pub(crate) fn set_guard_warmup_secs_for_tests(secs: u64) {
     GUARD_WARMUP_SECS.store(secs, Ordering::Relaxed);
 }
 
 #[allow(dead_code)]
-#[cfg(feature = "test-util")]
+#[cfg(any(test, feature = "test-util"))]
 pub(crate) fn reset_guard_warmup_secs_for_tests() {
     GUARD_WARMUP_SECS.store(TUN_SELF_HEAL_WARMUP_SECS, Ordering::Relaxed);
 }
 
 /// 测试用：覆盖连通性结果。`None`=真实；`Some(true/false)`=固定。
 #[allow(dead_code)]
-#[cfg(feature = "test-util")]
+#[cfg(any(test, feature = "test-util"))]
 pub(crate) fn set_guard_connectivity_override_for_tests(result: Option<bool>) {
     let v = match result {
         None => 0,
@@ -72,7 +75,7 @@ pub(crate) fn set_guard_connectivity_override_for_tests(result: Option<bool>) {
 }
 
 #[allow(dead_code)]
-#[cfg(feature = "test-util")]
+#[cfg(any(test, feature = "test-util"))]
 pub(crate) fn reset_guard_connectivity_override_for_tests() {
     GUARD_CONNECTIVITY_OVERRIDE.store(0, Ordering::Relaxed);
 }
@@ -255,18 +258,28 @@ pub(super) async fn enable_kernel_guard_with_process<R: Runtime + 'static>(
                                 port_value, tun_connectivity_failures, policy.cooldown_secs
                             );
 
-                            let config_path = resolve_config_path_or_default(&app_handle).await;
-                            let tun_enabled = GUARDED_TUN_ENABLED.load(Ordering::Relaxed);
-
-                            match process
-                                .restart(&app_handle, &config_path, tun_enabled)
-                                .await
-                            {
-                                Ok(_) => {
+                            let operation_app = app_handle.clone();
+                            let operation_process = process.clone();
+                            let result = execute_kernel_operation(
+                                app_handle.clone(),
+                                "kernel.guard-tun-self-heal",
+                                async move {
+                                    if KERNEL_STATE.get_desired_state()
+                                        != crate::app::core::kernel_service::KernelDesiredState::Running
+                                    {
+                                        return Ok(json!({ "success": true, "skipped": true }));
+                                    }
+                                    let config_path =
+                                        resolve_config_path_or_default(&operation_app).await;
+                                    let tun_enabled =
+                                        GUARDED_TUN_ENABLED.load(Ordering::Relaxed);
+                                    operation_process
+                                        .restart(&operation_app, &config_path, tun_enabled)
+                                        .await?;
                                     KERNEL_STATE.mark_running(port_value);
                                     if port_value > 0 {
                                         if let Err(e) = start_websocket_relay(
-                                            app_handle.clone(),
+                                            operation_app.clone(),
                                             Some(port_value),
                                         )
                                         .await
@@ -274,18 +287,43 @@ pub(super) async fn enable_kernel_guard_with_process<R: Runtime + 'static>(
                                             warn!("TUN 自愈后启动事件中继失败: {}", e);
                                         }
                                     }
+                                    emit_kernel_started(
+                                        &operation_app,
+                                        "auto",
+                                        port_value,
+                                        0,
+                                        true,
+                                    );
+                                    Ok(json!({ "success": true, "skipped": false }))
+                                }
+                                .boxed(),
+                            )
+                            .await;
 
-                                    emit_kernel_started(&app_handle, "auto", port_value, 0, true);
+                            match result {
+                                Ok(value) => {
+                                    if value
+                                        .get("skipped")
+                                        .and_then(|value| value.as_bool())
+                                        .unwrap_or(false)
+                                    {
+                                        KEEP_ALIVE_ENABLED.store(false, Ordering::Relaxed);
+                                        break;
+                                    }
                                     tun_connectivity_failures = 0;
-                                    next_tun_self_heal_at =
-                                        next_self_heal_deadline(Instant::now(), policy.cooldown_secs);
+                                    next_tun_self_heal_at = next_self_heal_deadline(
+                                        Instant::now(),
+                                        policy.cooldown_secs,
+                                    );
                                     info!("TUN 自愈重启完成");
                                 }
                                 Err(err) => {
                                     warn!("TUN 自愈重启失败: {}", err);
                                     KERNEL_STATE.mark_failed();
-                                    next_tun_self_heal_at =
-                                        next_self_heal_deadline(Instant::now(), policy.cooldown_secs);
+                                    next_tun_self_heal_at = next_self_heal_deadline(
+                                        Instant::now(),
+                                        policy.cooldown_secs,
+                                    );
 
                                     let err_str = err.to_string();
                                     if is_sudo_password_error(&err_str) {
@@ -328,6 +366,14 @@ pub(super) async fn enable_kernel_guard_with_process<R: Runtime + 'static>(
 
                     emit_kernel_stopped(&app_handle);
 
+                    if KERNEL_STATE.get_desired_state()
+                        != crate::app::core::kernel_service::KernelDesiredState::Running
+                    {
+                        info!("守护检测到期望状态为停止，结束守护而不重启");
+                        KEEP_ALIVE_ENABLED.store(false, Ordering::Relaxed);
+                        break;
+                    }
+
                     let config_path = resolve_config_path_or_default(&app_handle).await;
 
                     let kernel_path = paths::get_kernel_path();
@@ -365,52 +411,79 @@ pub(super) async fn enable_kernel_guard_with_process<R: Runtime + 'static>(
                         GuardPreflightIssue::None => {}
                     }
 
-                    if let Err(err) = process
-                        .start(Some(&app_handle), &config_path, tun_enabled)
-                        .await
-                    {
-                        warn!("守护重启内核失败: {}", err);
-                        KERNEL_STATE.mark_failed();
+                    let operation_app = app_handle.clone();
+                    let operation_process = process.clone();
+                    let operation_config_path = config_path.clone();
+                    let restart_result = execute_kernel_operation(
+                        app_handle.clone(),
+                        "kernel.guard-crash-recovery",
+                        async move {
+                            if KERNEL_STATE.get_desired_state()
+                                != crate::app::core::kernel_service::KernelDesiredState::Running
+                            {
+                                return Ok(json!({ "success": true, "skipped": true }));
+                            }
+                            operation_process
+                                .start(Some(&operation_app), &operation_config_path, tun_enabled)
+                                .await?;
+                            KERNEL_STATE.mark_running(port_value);
+                            if port_value > 0 {
+                                if let Err(e) =
+                                    start_websocket_relay(operation_app.clone(), Some(port_value))
+                                        .await
+                                {
+                                    warn!("守护启动事件中继失败: {}", e);
+                                }
+                            }
+                            emit_kernel_started(&operation_app, "auto", port_value, 0, true);
+                            Ok(json!({ "success": true, "skipped": false }))
+                        }
+                        .boxed(),
+                    )
+                    .await;
 
-                        let err_str = err.to_string();
-                        if is_sudo_password_error(&err_str) {
-                            // 若因 sudo 密码失效而重启失败，停止守护并提示用户重新设置密码。
-                            emit_kernel_error(
-                                &app_handle,
-                                "TUN 提权失败：sudo 密码无效，请重新输入系统密码后重启内核。",
-                            );
+                    match restart_result {
+                        Ok(value)
+                            if value
+                                .get("skipped")
+                                .and_then(|value| value.as_bool())
+                                .unwrap_or(false) =>
+                        {
                             KEEP_ALIVE_ENABLED.store(false, Ordering::Relaxed);
-                            GUARDED_API_PORT.store(0, Ordering::Relaxed);
-                            GUARDED_TUN_ENABLED.store(false, Ordering::Relaxed);
                             break;
                         }
+                        Ok(_) => {}
+                        Err(err) => {
+                            warn!("守护重启内核失败: {}", err);
+                            KERNEL_STATE.mark_failed();
 
-                        emit_kernel_error_with_context(
-                            &app_handle,
-                            "KERNEL_GUARD_RESTART_FAILED",
-                            "守护自动重启失败",
-                            Some(&err_str),
-                            Some("kernel.guard.restart"),
-                            true,
-                        );
+                            let err_str = err.to_string();
+                            if is_sudo_password_error(&err_str) {
+                                // 若因 sudo 密码失效而重启失败，停止守护并提示用户重新设置密码。
+                                emit_kernel_error(
+                                    &app_handle,
+                                    "TUN 提权失败：sudo 密码无效，请重新输入系统密码后重启内核。",
+                                );
+                                KEEP_ALIVE_ENABLED.store(false, Ordering::Relaxed);
+                                GUARDED_API_PORT.store(0, Ordering::Relaxed);
+                                GUARDED_TUN_ENABLED.store(false, Ordering::Relaxed);
+                                break;
+                            }
 
-                        continue;
-                    }
-
-                    KERNEL_STATE.mark_running(port_value);
-                    if port_value > 0 {
-                        if let Err(e) =
-                            start_websocket_relay(app_handle.clone(), Some(port_value)).await
-                        {
-                            warn!("守护启动事件中继失败: {}", e);
+                            emit_kernel_error_with_context(
+                                &app_handle,
+                                "KERNEL_GUARD_RESTART_FAILED",
+                                "守护自动重启失败",
+                                Some(&err_str),
+                                Some("kernel.guard.restart"),
+                                true,
+                            );
+                            continue;
                         }
                     }
 
                     tun_connectivity_failures = 0;
                     next_tun_self_heal_at = Instant::now() + guard_warmup_duration();
-
-                    // Guard restart uses port 0 since we don't have full state
-                    emit_kernel_started(&app_handle, "auto", port_value, 0, true);
                 }
             }
         }
@@ -452,6 +525,8 @@ pub(super) async fn disable_kernel_guard() {
 mod tests {
     use super::*;
 
+    static GUARD_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[test]
     fn tun_self_heal_policy_default_and_clamp() {
         let d = TunSelfHealPolicy::default_policy();
@@ -473,7 +548,10 @@ mod tests {
     fn tun_connectivity_failure_counter_and_heal_gate() {
         assert_eq!(update_tun_connectivity_failures(0, Ok(true), 3), (0, false));
         assert_eq!(update_tun_connectivity_failures(2, Ok(true), 3), (0, false));
-        assert_eq!(update_tun_connectivity_failures(0, Ok(false), 3), (1, false));
+        assert_eq!(
+            update_tun_connectivity_failures(0, Ok(false), 3),
+            (1, false)
+        );
         assert_eq!(update_tun_connectivity_failures(2, Ok(false), 3), (3, true));
         assert_eq!(update_tun_connectivity_failures(2, Err(()), 3), (3, true));
 
@@ -486,6 +564,7 @@ mod tests {
 
     #[tokio::test]
     async fn disable_kernel_guard_idempotent() {
+        let _test_guard = GUARD_TEST_LOCK.lock().await;
         // 未启用时调用应直接返回
         disable_kernel_guard().await;
         disable_kernel_guard().await;
@@ -523,7 +602,10 @@ mod tests {
         assert_eq!(TunSelfHealPolicy::from_config(true, 15).cooldown_secs, 15);
         assert_eq!(TunSelfHealPolicy::from_config(true, 600).cooldown_secs, 600);
         assert_eq!(TunSelfHealPolicy::from_config(true, 14).cooldown_secs, 15);
-        assert_eq!(TunSelfHealPolicy::from_config(false, 601).cooldown_secs, 600);
+        assert_eq!(
+            TunSelfHealPolicy::from_config(false, 601).cooldown_secs,
+            600
+        );
         // 常量存在性
         assert_eq!(TUN_CONNECTIVITY_FAIL_THRESHOLD, 3);
         assert_eq!(TUN_SELF_HEAL_WARMUP_SECS, 20);
@@ -555,6 +637,7 @@ mod tests {
 
     #[tokio::test]
     async fn enable_then_disable_guard_with_mock_app() {
+        let _test_guard = GUARD_TEST_LOCK.lock().await;
         use crate::test_support::MockAppEnv;
 
         let env = MockAppEnv::new();
@@ -570,11 +653,12 @@ mod tests {
 
     #[tokio::test]
     async fn guard_loop_restarts_missing_kernel_then_stops() {
+        let _test_guard = GUARD_TEST_LOCK.lock().await;
         use crate::test_support::MockAppEnv;
         use std::fs;
 
         // 压低 tick，使循环尽快进入“内核未运行 → 重启失败（缺二进制）”分支
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         set_guard_tick_secs_for_tests(1);
         let env = MockAppEnv::new();
         // 工作区下无 sing-box 可执行文件 → preflight KernelBinaryMissing
@@ -596,18 +680,19 @@ mod tests {
         // 等待至少 1 个 tick + 处理时间
         tokio::time::sleep(Duration::from_millis(1500)).await;
         disable_kernel_guard().await;
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         reset_guard_tick_secs_for_tests();
     }
 
     #[tokio::test]
     async fn guard_loop_running_kernel_tun_disabled_path() {
+        let _test_guard = GUARD_TEST_LOCK.lock().await;
         use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::test_support::MockAppEnv;
         use std::fs;
         use std::path::Path;
 
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         set_guard_tick_secs_for_tests(1);
 
         let env = MockAppEnv::new();
@@ -647,18 +732,19 @@ exit 0
         tokio::time::sleep(Duration::from_millis(1500)).await;
         disable_kernel_guard().await;
         let _ = PROCESS_MANAGER.stop::<tauri::Wry>(None).await;
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         reset_guard_tick_secs_for_tests();
     }
 
     #[tokio::test]
     async fn guard_loop_tun_self_heal_disabled_policy() {
+        let _test_guard = GUARD_TEST_LOCK.lock().await;
         use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::test_support::MockAppEnv;
         use std::fs;
         use std::path::Path;
 
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         {
             set_guard_tick_secs_for_tests(1);
             set_guard_warmup_secs_for_tests(0);
@@ -708,7 +794,7 @@ exit 0
         tokio::time::sleep(Duration::from_millis(1800)).await;
         disable_kernel_guard().await;
         let _ = PROCESS_MANAGER.stop::<tauri::Wry>(None).await;
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         {
             reset_guard_tick_secs_for_tests();
             reset_guard_warmup_secs_for_tests();
@@ -718,12 +804,13 @@ exit 0
 
     #[tokio::test]
     async fn guard_loop_tun_self_heal_connectivity_fail_triggers_restart() {
+        let _test_guard = GUARD_TEST_LOCK.lock().await;
         use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::test_support::MockAppEnv;
         use std::fs;
         use std::path::Path;
 
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         {
             set_guard_tick_secs_for_tests(1);
             set_guard_warmup_secs_for_tests(0);
@@ -775,7 +862,7 @@ exit 0
         tokio::time::sleep(Duration::from_millis(4500)).await;
         disable_kernel_guard().await;
         let _ = PROCESS_MANAGER.stop::<tauri::Wry>(None).await;
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         {
             reset_guard_tick_secs_for_tests();
             reset_guard_warmup_secs_for_tests();
@@ -785,10 +872,11 @@ exit 0
 
     #[tokio::test]
     async fn guard_loop_config_missing_preflight() {
+        let _test_guard = GUARD_TEST_LOCK.lock().await;
         use crate::test_support::MockAppEnv;
         use std::fs;
 
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         set_guard_tick_secs_for_tests(1);
 
         let env = MockAppEnv::new();
@@ -813,22 +901,29 @@ exit 0
         let db = env.workspace.path().join("guard-cfg-miss.db");
         let storage = env.install_storage_from_path(db.to_str().unwrap()).await;
         let mut cfg = crate::app::storage::state_model::AppConfig::default();
-        cfg.active_config_path = Some(env.workspace.path().join("no-such-config.json").to_string_lossy().to_string());
+        cfg.active_config_path = Some(
+            env.workspace
+                .path()
+                .join("no-such-config.json")
+                .to_string_lossy()
+                .to_string(),
+        );
         storage.save_app_config(&cfg).await.unwrap();
 
         enable_kernel_guard(env.handle(), 19112, false).await;
         tokio::time::sleep(Duration::from_millis(1800)).await;
         disable_kernel_guard().await;
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         reset_guard_tick_secs_for_tests();
     }
 
     #[tokio::test]
     async fn guard_loop_successful_restart_with_fake_kernel() {
+        let _test_guard = GUARD_TEST_LOCK.lock().await;
         use crate::test_support::MockAppEnv;
         use std::fs;
 
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         set_guard_tick_secs_for_tests(1);
 
         let env = MockAppEnv::new();
@@ -871,12 +966,13 @@ exit 0
         let _ = crate::app::core::kernel_service::PROCESS_MANAGER
             .stop::<tauri::Wry>(None)
             .await;
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         reset_guard_tick_secs_for_tests();
     }
 
     #[tokio::test]
     async fn enable_kernel_guard_with_process_triggers_start() {
+        let _test_guard = GUARD_TEST_LOCK.lock().await;
         use crate::app::core::kernel_service::status::set_platform_kernel_detection_enabled_for_tests;
         use crate::app::core::kernel_service::{
             reset_process_controller_for_test, set_process_controller_for_test,
@@ -885,7 +981,7 @@ exit 0
         use std::fs;
         use std::sync::Arc;
 
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         set_guard_tick_secs_for_tests(1);
         set_platform_kernel_detection_enabled_for_tests(false);
 
@@ -928,6 +1024,8 @@ exit 0
 
         // 确保守护状态干净
         disable_kernel_guard().await;
+        KERNEL_STATE
+            .set_desired_state(crate::app::core::kernel_service::KernelDesiredState::Running);
 
         enable_kernel_guard_with_process(env.handle(), 19120, false, fake.clone()).await;
         tokio::time::sleep(Duration::from_millis(2500)).await;
@@ -941,13 +1039,16 @@ exit 0
         );
 
         reset_process_controller_for_test();
+        KERNEL_STATE
+            .set_desired_state(crate::app::core::kernel_service::KernelDesiredState::Stopped);
         set_platform_kernel_detection_enabled_for_tests(true);
-        #[cfg(feature = "test-util")]
+        #[cfg(any(test, feature = "test-util"))]
         reset_guard_tick_secs_for_tests();
     }
 
     #[tokio::test]
     async fn load_tun_self_heal_policy_from_storage_and_fallback() {
+        let _test_guard = GUARD_TEST_LOCK.lock().await;
         use crate::test_support::MockAppEnv;
 
         // 无 storage → fallback default（作用域结束释放 ENV_LOCK）

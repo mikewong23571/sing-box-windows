@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter, Runtime};
 #[cfg(test)]
 use tauri::Manager;
+use tauri::{AppHandle, Emitter, Runtime};
 use tracing::{info, warn};
 
 use crate::app::network::subscription_service::{
@@ -122,7 +122,12 @@ pub(crate) async fn run_upgrade_subscription_refresh_with_version<R: Runtime + '
         }
         Ok(Err(e)) => {
             warn!("升级后首次订阅刷新失败，将进入后台重试: {}", e);
-            spawn_retry_task(app.clone(), current_version.to_string(), active_config_path, e);
+            spawn_retry_task(
+                app.clone(),
+                current_version.to_string(),
+                active_config_path,
+                e,
+            );
         }
         Err(_) => {
             let timeout_error = format!(
@@ -457,8 +462,7 @@ mod tests {
             },
         ];
         assert_eq!(
-            find_subscription_for_active_path(&subs, "configs/b.json")
-                .map(|s| s.name.as_str()),
+            find_subscription_for_active_path(&subs, "configs/b.json").map(|s| s.name.as_str()),
             Some("b")
         );
         assert!(find_subscription_for_active_path(&subs, "missing").is_none());
@@ -483,7 +487,13 @@ mod tests {
 
         let loaded: Option<String> = env
             .app
-            .try_state::<std::sync::Arc<tokio::sync::OnceCell<std::sync::Arc<crate::app::storage::enhanced_storage_service::EnhancedStorageService>>>>()
+            .try_state::<std::sync::Arc<
+                tokio::sync::OnceCell<
+                    std::sync::Arc<
+                        crate::app::storage::enhanced_storage_service::EnhancedStorageService,
+                    >,
+                >,
+            >>()
             .unwrap()
             .get()
             .unwrap()
@@ -540,13 +550,16 @@ mod tests {
 
     #[tokio::test]
     async fn run_upgrade_refresh_version_skip_and_no_subscription() {
-        use crate::test_support::MockAppEnv;
         use crate::app::storage::state_model::AppConfig;
+        use crate::test_support::MockAppEnv;
 
         let env = MockAppEnv::new();
         let db = env.workspace.path().join("refresh.db");
         let storage = env.install_storage_from_path(db.to_str().unwrap()).await;
-        storage.save_app_config(&AppConfig::default()).await.unwrap();
+        storage
+            .save_app_config(&AppConfig::default())
+            .await
+            .unwrap();
         let h = env.handle();
 
         // 首次：版本变化但无活动订阅 → 记录版本并 Ok
@@ -634,7 +647,10 @@ mod tests {
         let env = MockAppEnv::new();
         let db = env.workspace.path().join("missing-sub.db");
         let storage = env.install_storage_from_path(db.to_str().unwrap()).await;
-        storage.save_app_config(&AppConfig::default()).await.unwrap();
+        storage
+            .save_app_config(&AppConfig::default())
+            .await
+            .unwrap();
         storage.save_subscriptions(&[]).await.unwrap();
         let err = refresh_subscription_by_config_path(&env.handle(), "/no/such.json", false)
             .await

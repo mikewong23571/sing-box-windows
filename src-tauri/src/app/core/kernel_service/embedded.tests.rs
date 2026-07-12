@@ -24,7 +24,8 @@ fn extract_zip_to_dir_and_find_subdir() {
     {
         let mut cursor = std::io::Cursor::new(&mut buf);
         let mut z = ZipWriter::new(&mut cursor);
-        z.start_file("nested/file.txt", SimpleFileOptions::default()).unwrap();
+        z.start_file("nested/file.txt", SimpleFileOptions::default())
+            .unwrap();
         z.write_all(b"data").unwrap();
         z.finish().unwrap();
     }
@@ -44,8 +45,10 @@ fn is_embedded_newer_edge_cases() {
     assert_eq!(is_embedded_newer("bad", "1.0.0"), None);
     assert_eq!(is_embedded_newer("1.0.0", "bad"), None);
     assert_eq!(normalize_version_string("  v2.0.0-beta  "), "2.0.0-beta");
-    assert!(extract_version_from_output("{\"version\":\"1.2.3\"}").is_some()
-        || extract_version_from_output("version 1.2.3").is_some());
+    assert!(
+        extract_version_from_output("{\"version\":\"1.2.3\"}").is_some()
+            || extract_version_from_output("version 1.2.3").is_some()
+    );
 }
 
 #[test]
@@ -110,7 +113,8 @@ fn extract_zip_with_directory_entries() {
     {
         let mut cursor = std::io::Cursor::new(&mut buf);
         let mut z = ZipWriter::new(&mut cursor);
-        z.add_directory("ui/", SimpleFileOptions::default()).unwrap();
+        z.add_directory("ui/", SimpleFileOptions::default())
+            .unwrap();
         z.start_file("ui/index.html", SimpleFileOptions::default())
             .unwrap();
         z.write_all(b"<html></html>").unwrap();
@@ -129,11 +133,7 @@ fn embedded_platform_and_find_paths() {
     let arch = "amd64";
     let exe = embedded_executable_name();
     // kernel/<platform>/<arch>/
-    let nested = dir
-        .path()
-        .join("kernel")
-        .join(platform)
-        .join(arch);
+    let nested = dir.path().join("kernel").join(platform).join(arch);
     fs::create_dir_all(&nested).unwrap();
     fs::write(nested.join(exe), b"bin").unwrap();
     let found = find_embedded_kernel_paths(dir.path(), platform, arch, exe);
@@ -312,7 +312,9 @@ async fn install_external_ui_from_zip_and_ready_flag() {
         z.write_all(b"<html>ui</html>").unwrap();
         z.finish().unwrap();
     }
-    install_external_ui_from_zip_bytes(&buf, work).await.unwrap();
+    install_external_ui_from_zip_bytes(&buf, work)
+        .await
+        .unwrap();
     assert!(external_ui_ready(work));
 
     // 已存在时应跳过下载

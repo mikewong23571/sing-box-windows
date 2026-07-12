@@ -36,7 +36,7 @@ pub async fn db_save_app_config(
     // 同步逻辑采用“局部 patch”策略：如果配置文件不是本程序生成的结构，会尽量只修改端口/TUN/DNS 策略等通用字段。
     let options = RuntimeApplyOptions::new("app-config-updated")
         .patch_active_config(true)
-        .force_restart(true);
+        .restart_if_running(true);
     apply_runtime_change(&app, RuntimeChange::AppConfigUpdated, options).await?;
 
     Ok(())
@@ -157,7 +157,10 @@ mod tests {
             .save_subscriptions(&[sample_sub(cfg_path.to_str().unwrap())])
             .await
             .unwrap();
-        storage.save_app_config(&AppConfig::default()).await.unwrap();
+        storage
+            .save_app_config(&AppConfig::default())
+            .await
+            .unwrap();
 
         // index Some → 同步存在的文件
         db_save_active_subscription_index(Some(0), env.handle())

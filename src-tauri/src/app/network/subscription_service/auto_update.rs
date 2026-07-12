@@ -89,7 +89,10 @@ pub(crate) fn should_run_for_subscription(sub: &Subscription, now_ms: u64) -> bo
     now_ms.saturating_sub(last_ref) >= interval.max(5) * 60 * 1000
 }
 
-pub(crate) fn subscription_matches_patch(sub: &Subscription, patch: &SubscriptionHealthPatch) -> bool {
+pub(crate) fn subscription_matches_patch(
+    sub: &Subscription,
+    patch: &SubscriptionHealthPatch,
+) -> bool {
     let url_match = !patch.url.is_empty() && sub.url.trim() == patch.url;
     let path_match = match (&patch.config_path, &sub.config_path) {
         (Some(lhs), Some(rhs)) => lhs == rhs,
@@ -208,10 +211,7 @@ pub(crate) fn build_failure_health_patch(
 }
 
 /// 筛选需要自动更新的订阅（纯逻辑）。
-pub(crate) fn collect_subscriptions_due(
-    subs: &[Subscription],
-    now_ms: u64,
-) -> Vec<&Subscription> {
+pub(crate) fn collect_subscriptions_due(subs: &[Subscription], now_ms: u64) -> Vec<&Subscription> {
     subs.iter()
         .filter(|sub| {
             let interval = sub

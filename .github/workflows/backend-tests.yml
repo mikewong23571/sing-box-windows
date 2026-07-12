@@ -1,6 +1,7 @@
 name: Backend tests & coverage
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - 'src-tauri/**'

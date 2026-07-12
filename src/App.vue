@@ -290,8 +290,8 @@ onMounted(async () => {
           const ok = await sudoStore.requestPassword()
           if (!ok) return
 
-          // 用户保存后，重新触发一次自动管理（尊重用户当前配置）
-          await kernelService.autoManageKernel({ forceRestart: true })
+          // 用户保存凭据后重试显式启动；配置变更本身不得隐式拉起内核。
+          await kernelStore.startKernel()
         } finally {
           sudoPromptRunning = false
         }

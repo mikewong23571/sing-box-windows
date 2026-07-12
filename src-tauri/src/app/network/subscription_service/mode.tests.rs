@@ -254,10 +254,7 @@ fn modify_default_mode_creates_experimental_block() {
     modify_default_mode(&path, "rule".into(), Some(12081)).unwrap();
     let content: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(
-        content["experimental"]["clash_api"]["default_mode"],
-        "rule"
-    );
+    assert_eq!(content["experimental"]["clash_api"]["default_mode"], "rule");
     assert!(content["experimental"]["clash_api"]["external_controller"]
         .as_str()
         .unwrap()

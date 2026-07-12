@@ -1,9 +1,7 @@
 //! 内核运行时配置与状态类型定义
 //!
-//! 提供统一的配置类型，替代分散的 ProxyOverrides 和 AutoManageOptions。
+//! 提供期望状态、观测状态、转换规划与启动诊断类型。
 
-use crate::app::core::tun_profile::TunProxyOptions;
-use crate::app::storage::state_model::AppConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU16, AtomicU8, Ordering};
 use std::sync::{Arc, RwLock};
@@ -30,6 +28,212 @@ pub enum KernelState {
     Crashed = 5,
 }
 
+/// 本次应用会话中用户期望的内核状态。
+///
+/// 该状态不持久化：应用启动时由 `auto_start_kernel` 初始化，之后只允许显式
+/// start/stop 和 shutdown 修改。配置、订阅与内核文件更新必须保持该状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum KernelDesiredState {
+    Running = 1,
+    #[default]
+    Stopped = 0,
+}
+
+impl From<u8> for KernelDesiredState {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => Self::Running,
+            _ => Self::Stopped,
+        }
+    }
+}
+
+impl KernelDesiredState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Stopped => "stopped",
+        }
+    }
+}
+
+/// 由进程状态与 readiness 合成的对外观测状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum KernelObservedState {
+    #[default]
+    Stopped,
+    Starting,
+    Running,
+    Degraded,
+    Stopping,
+    Failed,
+    Crashed,
+}
+
+impl KernelObservedState {
+    pub fn from_runtime(state: KernelState, readiness: &KernelReadinessSnapshot) -> Self {
+        if readiness.process_alive
+            && !matches!(state, KernelState::Starting | KernelState::Stopping)
+        {
+            return if readiness.api_ready && readiness.relay_ready {
+                Self::Running
+            } else {
+                Self::Degraded
+            };
+        }
+
+        match state {
+            KernelState::Starting => Self::Starting,
+            KernelState::Stopping => Self::Stopping,
+            KernelState::Failed => Self::Failed,
+            KernelState::Crashed => Self::Crashed,
+            KernelState::Running => Self::Stopped,
+            KernelState::Stopped => Self::Stopped,
+        }
+    }
+
+    pub fn is_process_active(self) -> bool {
+        matches!(
+            self,
+            Self::Starting | Self::Running | Self::Degraded | Self::Stopping
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum KernelChangeImpact {
+    #[default]
+    PersistOnly,
+    HotApply,
+    RestartIfRunning,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KernelRequestKind {
+    UserStart,
+    UserStop,
+    UserRestart,
+    ApplyRuntimeChange(KernelChangeImpact),
+    StartupReconcile { auto_start: bool },
+    ProcessCrashed,
+    Shutdown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KernelAction {
+    Noop,
+    Start,
+    Stop,
+    Restart,
+    HotApply,
+    ApplyConfigOnly,
+    Reject,
+}
+
+/// 与一次串行生命周期操作关联的元数据。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KernelOperationMeta {
+    pub op_id: String,
+    pub operation: String,
+    pub state_version: u64,
+}
+
+/// 前后端共享的内核生命周期快照。
+///
+/// `process_running`、`api_ready` 与 `websocket_ready` 为迁移期间保留的兼容字段；
+/// 新调用方应优先使用 desired/observed state 和 readiness。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KernelLifecycleSnapshot {
+    pub desired_state: KernelDesiredState,
+    pub observed_state: KernelObservedState,
+    pub process_running: bool,
+    pub api_ready: bool,
+    pub websocket_ready: bool,
+    pub readiness: KernelReadinessSnapshot,
+    pub startup_diagnosis: Option<StartupDiagnosis>,
+    pub kernel_state: KernelState,
+    pub state_version: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_meta: Option<KernelOperationMeta>,
+}
+
+/// 无 IO 的生命周期规划器。所有生产入口最终都应遵循该转换语义。
+pub fn plan_kernel_transition(
+    desired: KernelDesiredState,
+    observed: KernelObservedState,
+    request: KernelRequestKind,
+) -> KernelAction {
+    use KernelAction::*;
+
+    let running = matches!(
+        observed,
+        KernelObservedState::Running | KernelObservedState::Degraded
+    );
+    let active = observed.is_process_active();
+
+    match request {
+        KernelRequestKind::UserStart => {
+            if running || matches!(observed, KernelObservedState::Starting) {
+                Noop
+            } else {
+                Start
+            }
+        }
+        KernelRequestKind::UserStop | KernelRequestKind::Shutdown => {
+            if active {
+                Stop
+            } else {
+                Noop
+            }
+        }
+        KernelRequestKind::UserRestart => {
+            if running {
+                Restart
+            } else {
+                Reject
+            }
+        }
+        KernelRequestKind::ApplyRuntimeChange(KernelChangeImpact::PersistOnly) => ApplyConfigOnly,
+        KernelRequestKind::ApplyRuntimeChange(KernelChangeImpact::HotApply) => {
+            if running {
+                HotApply
+            } else {
+                ApplyConfigOnly
+            }
+        }
+        KernelRequestKind::ApplyRuntimeChange(KernelChangeImpact::RestartIfRunning) => {
+            if desired == KernelDesiredState::Running && running {
+                Restart
+            } else {
+                ApplyConfigOnly
+            }
+        }
+        KernelRequestKind::StartupReconcile { auto_start } => {
+            if auto_start {
+                if running {
+                    Noop
+                } else {
+                    Start
+                }
+            } else if active {
+                Stop
+            } else {
+                Noop
+            }
+        }
+        KernelRequestKind::ProcessCrashed => {
+            if desired == KernelDesiredState::Running {
+                Start
+            } else {
+                Noop
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StartupStage {
@@ -38,7 +242,6 @@ pub enum StartupStage {
     Spawn,
     Readiness,
     Guard,
-    AutoManage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,8 +271,7 @@ impl StartupDiagnosisKind {
             StartupDiagnosisKind::SudoRequired
             | StartupDiagnosisKind::SudoInvalid
             | StartupDiagnosisKind::PermissionDenied => 70,
-            StartupDiagnosisKind::PortConflict
-            | StartupDiagnosisKind::ConflictCleanupFailed => 60,
+            StartupDiagnosisKind::PortConflict | StartupDiagnosisKind::ConflictCleanupFailed => 60,
             StartupDiagnosisKind::ProcessExitedEarly => 50,
             StartupDiagnosisKind::ApiHttpError | StartupDiagnosisKind::ApiTimeout => 40,
             StartupDiagnosisKind::GuardRestartFailed => 30,
@@ -165,6 +367,7 @@ impl KernelState {
 /// 使用无锁原子类型确保高性能和无死锁风险。
 pub struct KernelStateManager {
     state: AtomicU8,
+    desired_state: AtomicU8,
     api_port: AtomicU16,
     startup_diagnosis: RwLock<Option<StartupDiagnosis>>,
     readiness: RwLock<KernelReadinessSnapshot>,
@@ -175,6 +378,7 @@ impl KernelStateManager {
     pub fn new() -> Self {
         Self {
             state: AtomicU8::new(KernelState::Stopped as u8),
+            desired_state: AtomicU8::new(KernelDesiredState::Stopped as u8),
             api_port: AtomicU16::new(0),
             startup_diagnosis: RwLock::new(None),
             readiness: RwLock::new(KernelReadinessSnapshot::default()),
@@ -222,6 +426,18 @@ impl KernelStateManager {
         self.state.store(state as u8, Ordering::SeqCst);
     }
 
+    pub fn get_desired_state(&self) -> KernelDesiredState {
+        KernelDesiredState::from(self.desired_state.load(Ordering::SeqCst))
+    }
+
+    pub fn set_desired_state(&self, state: KernelDesiredState) {
+        self.desired_state.store(state as u8, Ordering::SeqCst);
+    }
+
+    pub fn get_observed_state(&self) -> KernelObservedState {
+        KernelObservedState::from_runtime(self.get_state(), &self.get_readiness())
+    }
+
     /// 尝试过渡到启动状态，仅在可启动时返回 true
     pub fn try_transition_to_starting(&self) -> bool {
         let current = self.get_state();
@@ -261,6 +477,7 @@ impl KernelStateManager {
     pub fn mark_stopped(&self) {
         self.api_port.store(0, Ordering::SeqCst);
         self.set_state(KernelState::Stopped);
+        self.clear_startup_diagnosis();
         self.update_readiness(|readiness| {
             readiness.process_alive = false;
             readiness.api_ready = false;
@@ -323,9 +540,7 @@ impl KernelStateManager {
     pub fn record_startup_diagnosis(&self, diagnosis: StartupDiagnosis) {
         if let Ok(mut guard) = self.startup_diagnosis.write() {
             match guard.as_ref() {
-                None => {
-                    *guard = Some(diagnosis)
-                }
+                None => *guard = Some(diagnosis),
                 Some(existing) if existing.attempt_id != diagnosis.attempt_id => {
                     *guard = Some(diagnosis)
                 }
@@ -351,96 +566,6 @@ impl Default for KernelStateManager {
 // 全局状态管理器实例
 lazy_static::lazy_static! {
     pub static ref KERNEL_STATE: Arc<KernelStateManager> = Arc::new(KernelStateManager::new());
-}
-
-/// 统一的内核运行时配置
-///
-/// 替代分散的 ProxyOverrides 和 AutoManageOptions。
-/// 所有字段为 Option，便于覆盖式合并。
-#[derive(Debug, Clone, Default)]
-pub struct KernelRuntimeConfig {
-    /// 代理模式字符串 ("system" | "tun" | "manual")
-    pub proxy_mode: Option<String>,
-    /// API 端口
-    pub api_port: Option<u16>,
-    /// 代理端口
-    pub proxy_port: Option<u16>,
-    /// 是否优先 IPv6
-    pub prefer_ipv6: Option<bool>,
-    /// 系统代理绕过列表
-    pub system_proxy_bypass: Option<String>,
-    /// TUN 配置选项
-    pub tun_options: Option<TunProxyOptions>,
-    /// 是否启用系统代理
-    pub system_proxy_enabled: Option<bool>,
-    /// 是否启用 TUN
-    pub tun_enabled: Option<bool>,
-    /// 是否开启守护（keep-alive）
-    pub keep_alive: Option<bool>,
-    /// 是否强制重启（仅用于 auto_manage）
-    pub force_restart: bool,
-}
-
-impl KernelRuntimeConfig {
-    /// 从 AppConfig 构建完整配置
-    pub fn from_app_config(config: &AppConfig) -> Self {
-        KernelRuntimeConfig {
-            proxy_mode: Some(config.proxy_mode.clone()),
-            api_port: Some(config.api_port),
-            proxy_port: Some(config.proxy_port),
-            prefer_ipv6: Some(config.prefer_ipv6),
-            system_proxy_bypass: Some(config.system_proxy_bypass.clone()),
-            tun_options: Some(TunProxyOptions {
-                ipv4_address: config.tun_ipv4.clone(),
-                ipv6_address: config.tun_ipv6.clone(),
-                mtu: config.tun_mtu,
-                auto_route: config.tun_auto_route,
-                strict_route: config.tun_strict_route,
-                stack: config.tun_stack.clone(),
-                enable_ipv6: config.tun_enable_ipv6,
-                route_exclude_address: config.tun_route_exclude_address.clone(),
-                interface_name: None,
-            }),
-            system_proxy_enabled: Some(config.system_proxy_enabled),
-            tun_enabled: Some(config.tun_enabled),
-            keep_alive: Some(config.auto_start_kernel),
-            force_restart: false,
-        }
-    }
-
-    /// 将部分覆盖合并到当前配置
-    pub fn merge(&mut self, overrides: &KernelRuntimeConfig) {
-        if overrides.proxy_mode.is_some() {
-            self.proxy_mode = overrides.proxy_mode.clone();
-        }
-        if overrides.api_port.is_some() {
-            self.api_port = overrides.api_port;
-        }
-        if overrides.proxy_port.is_some() {
-            self.proxy_port = overrides.proxy_port;
-        }
-        if overrides.prefer_ipv6.is_some() {
-            self.prefer_ipv6 = overrides.prefer_ipv6;
-        }
-        if overrides.system_proxy_bypass.is_some() {
-            self.system_proxy_bypass = overrides.system_proxy_bypass.clone();
-        }
-        if overrides.tun_options.is_some() {
-            self.tun_options = overrides.tun_options.clone();
-        }
-        if overrides.system_proxy_enabled.is_some() {
-            self.system_proxy_enabled = overrides.system_proxy_enabled;
-        }
-        if overrides.tun_enabled.is_some() {
-            self.tun_enabled = overrides.tun_enabled;
-        }
-        if overrides.keep_alive.is_some() {
-            self.keep_alive = overrides.keep_alive;
-        }
-        if overrides.force_restart {
-            self.force_restart = true;
-        }
-    }
 }
 
 #[cfg(test)]

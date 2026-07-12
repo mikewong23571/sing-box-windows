@@ -28,6 +28,7 @@ const QUEUE_CAPACITY: usize = 32;
 
 static OP_COUNTER: AtomicU64 = AtomicU64::new(1);
 static STATE_VERSION: AtomicU64 = AtomicU64::new(0);
+static CURRENT_OPERATION: Mutex<Option<(String, &'static str, u64)>> = Mutex::new(None);
 /// 跨 `#[tokio::test]` runtime 时旧 receiver 可能已 drop，需可重建。
 static ORCHESTRATOR_TX: Mutex<Option<mpsc::Sender<OperationRequest>>> = Mutex::new(None);
 
@@ -50,6 +51,13 @@ pub(crate) fn bump_state_version() -> u64 {
 
 pub fn current_state_version() -> u64 {
     STATE_VERSION.load(Ordering::SeqCst)
+}
+
+pub fn current_operation_meta() -> Option<(String, &'static str, u64)> {
+    CURRENT_OPERATION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
 }
 
 pub(crate) fn with_operation_meta(
@@ -100,6 +108,10 @@ async fn run_worker(mut rx: mpsc::Receiver<OperationRequest>) {
     while let Some(req) = rx.recv().await {
         let state_version = bump_state_version();
         let queued_at = now_millis();
+        *CURRENT_OPERATION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some((req.op_id.clone(), req.op_name, state_version));
 
         fire_emit(
             &req.emit,
@@ -148,6 +160,16 @@ async fn run_worker(mut rx: mpsc::Receiver<OperationRequest>) {
 
         if req.response_tx.send(final_result).is_err() {
             warn!("内核编排器响应发送失败: {}", req.op_id);
+        }
+        let mut current = CURRENT_OPERATION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if current
+            .as_ref()
+            .map(|(op_id, _, _)| op_id == &req.op_id)
+            .unwrap_or(false)
+        {
+            *current = None;
         }
     }
 }

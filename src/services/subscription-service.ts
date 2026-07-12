@@ -8,10 +8,12 @@ export interface SubscriptionPersistOptions {
 
 export interface SetActiveConfigOptions {
   useOriginalConfig?: boolean
+  restartIfRunning?: boolean
 }
 
 interface BackendSubscriptionPersistResult {
   config_path: string
+  config_changed: boolean
   subscription_upload?: number | null
   subscription_download?: number | null
   subscription_total?: number | null
@@ -20,6 +22,7 @@ interface BackendSubscriptionPersistResult {
 
 export interface SubscriptionPersistResult {
   configPath: string
+  configChanged: boolean
   subscriptionUpload?: number
   subscriptionDownload?: number
   subscriptionTotal?: number
@@ -28,6 +31,7 @@ export interface SubscriptionPersistResult {
 
 const mapPersistResult = (result: BackendSubscriptionPersistResult): SubscriptionPersistResult => ({
   configPath: result.config_path,
+  configChanged: result.config_changed,
   subscriptionUpload: result.subscription_upload ?? undefined,
   subscriptionDownload: result.subscription_download ?? undefined,
   subscriptionTotal: result.subscription_total ?? undefined,
@@ -69,6 +73,7 @@ export const subscriptionService = {
       {
         configPath,
         useOriginalConfig: options.useOriginalConfig,
+        restartIfRunning: options.restartIfRunning,
       },
       undefined,
     )

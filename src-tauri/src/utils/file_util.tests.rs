@@ -77,7 +77,9 @@ async fn download_file_http_error_status() {
             let mut buf = [0u8; 256];
             let _ = sock.read(&mut buf).await;
             let _ = sock
-                .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
                 .await;
         }
     });

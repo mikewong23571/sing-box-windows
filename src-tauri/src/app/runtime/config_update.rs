@@ -10,9 +10,7 @@ pub enum ConfigPatchMode {
     PortsOnly,
 }
 
-pub fn resolve_patch_mode_for_subscription(
-    subscription: Option<&Subscription>,
-) -> ConfigPatchMode {
+pub fn resolve_patch_mode_for_subscription(subscription: Option<&Subscription>) -> ConfigPatchMode {
     match subscription {
         Some(sub) if sub.use_original_config => ConfigPatchMode::PortsOnly,
         _ => ConfigPatchMode::Full,
@@ -111,12 +109,12 @@ pub async fn apply_runtime_config_update<R: Runtime>(
     app: &AppHandle<R>,
     _effective_config: &AppConfig,
     use_original_config_hint: Option<bool>,
-    force_restart: bool,
+    restart_if_running: bool,
     reason: &'static str,
 ) {
     let options = RuntimeApplyOptions::new(reason)
         .patch_active_config(true)
-        .force_restart(force_restart)
+        .restart_if_running(restart_if_running)
         .use_original_config_hint(use_original_config_hint);
 
     if let Err(error) = apply_runtime_change(app, RuntimeChange::AppConfigUpdated, options).await {

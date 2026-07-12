@@ -39,11 +39,6 @@ export const useAppStore = defineStore(
       clearMessages,
     } = messaging
 
-    // 应用运行状态
-    const isRunning = ref(false)
-    // 连接中状态（正在启动内核但尚未完成事件流就绪）
-    const isConnecting = ref(false)
-
     // 托盘实例ID - 由TrayStore使用
     const trayInstanceId = ref<string | null>(null)
 
@@ -58,7 +53,7 @@ export const useAppStore = defineStore(
       return 'manual'
     })
 
-    const autoStartKernel = ref(true)
+    const autoStartKernel = ref(false)
 
     // 系统开机自启动设置
     const autoStartApp = ref(false)
@@ -220,28 +215,6 @@ export const useAppStore = defineStore(
     // Store清理方法
     const cleanupStore = () => {
       stopAutoSave()
-    }
-
-    // 应用运行状态变更
-    const setRunningState = (state: boolean) => {
-      if (isRunning.value !== state) {
-        isRunning.value = state
-
-        if (!state) {
-          // 运行停止时同步清理连接中的状态
-          isConnecting.value = false
-        }
-
-        // 进程状态变更现在通过Pinia响应式系统处理
-        console.log('进程状态已变更:', state)
-      }
-    }
-
-    // 设置连接中状态
-    const setConnectingState = (state: boolean) => {
-      isConnecting.value = state
-      // 连接状态变更现在通过Pinia响应式系统处理
-      console.log('连接状态已变更:', state)
     }
 
     // 切换系统开机自启
@@ -439,8 +412,6 @@ export const useAppStore = defineStore(
     }
 
     return {
-      isRunning,
-      isConnecting,
       isDataRestored,
       trayInstanceId,
       systemProxyEnabled,
@@ -480,8 +451,6 @@ export const useAppStore = defineStore(
       singboxEnableAppGroups,
       tunSelfHealEnabled,
       tunSelfHealCooldownSecs,
-      setRunningState,
-      setConnectingState,
       toggleAutoStart,
       toggleAutoStartKernel,
       setAutoHideToTrayOnAutostart,

@@ -1,7 +1,7 @@
 use serde::Serialize;
-use tauri::{AppHandle, Runtime};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use tauri::Manager;
+use tauri::{AppHandle, Runtime};
 
 /// 统一给前端/调用方识别的错误码前缀（避免依赖具体文案）。
 /// 约定：Rust 端返回 `SUDO_PASSWORD_REQUIRED` / `SUDO_PASSWORD_INVALID` 等，
@@ -371,7 +371,10 @@ fn run_sudo_command(password: Option<&str>, args: &[&str]) -> Result<std::proces
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(crate) fn map_sudo_command_result(output: std::process::Output, action: &str) -> Result<(), String> {
+pub(crate) fn map_sudo_command_result(
+    output: std::process::Output,
+    action: &str,
+) -> Result<(), String> {
     if output.status.success() {
         return Ok(());
     }

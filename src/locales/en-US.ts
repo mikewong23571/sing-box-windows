@@ -38,6 +38,8 @@ export default {
     crashed: 'Crashed',
     connecting: 'Connecting',
     disconnected: 'Disconnected',
+    desiredRunning: 'Expected to run',
+    desiredStopped: 'Expected to stop',
   },
   home: {
     kernelHealthy: 'Kernel healthy',
@@ -581,6 +583,8 @@ export default {
     autoStart: {
       app: 'Startup with System',
       appDesc: 'Automatically run application on system startup',
+      kernel: 'Start Kernel with App',
+      kernelDesc: 'Only applies when the app starts; the kernel can still be started manually',
       error: 'Failed to set auto-start',
     },
     startup: {

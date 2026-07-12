@@ -83,7 +83,8 @@ fn extract_tar_gz_and_find() {
         header.set_size(data.len() as u64);
         header.set_mode(0o755);
         header.set_cksum();
-        tar.append_data(&mut header, kernel_executable_name(), &data[..]).unwrap();
+        tar.append_data(&mut header, kernel_executable_name(), &data[..])
+            .unwrap();
         tar.finish().unwrap();
     }
     extract_archive(&archive, &out).unwrap();
@@ -246,7 +247,10 @@ exit 1
         fs::set_permissions(&bin, p).unwrap();
     }
     let err = validate_kernel_binary(&bin).await.unwrap_err();
-    assert!(err.contains("校验失败") && err.contains("boom"), "err={err}");
+    assert!(
+        err.contains("校验失败") && err.contains("boom"),
+        "err={err}"
+    );
 }
 
 #[tokio::test]
@@ -286,7 +290,9 @@ exit 0
     }
     let temp = dir.path().join("tmp");
     fs::create_dir_all(&temp).unwrap();
-    let resolved = resolve_kernel_binary_source(&zip_path, &temp).await.unwrap();
+    let resolved = resolve_kernel_binary_source(&zip_path, &temp)
+        .await
+        .unwrap();
     assert!(resolved.ends_with(kernel_executable_name()));
     set_executable_permission(&resolved).unwrap();
     let ver = validate_kernel_binary(&resolved).await.unwrap();
@@ -313,7 +319,9 @@ async fn replace_installed_kernel_with_backup_and_restore() {
     assert_eq!(fs::read(&bak).unwrap(), b"old-kernel");
 
     // 从备份回滚应恢复旧内核（避免同秒二次 replace 覆盖同名 .bak）
-    restore_kernel_from_backup(&kernel_path, &bak).await.unwrap();
+    restore_kernel_from_backup(&kernel_path, &bak)
+        .await
+        .unwrap();
     assert_eq!(fs::read(&kernel_path).unwrap(), b"old-kernel");
 
     // 再次替换：无已有备份路径冲突时仍应成功
@@ -321,7 +329,9 @@ async fn replace_installed_kernel_with_backup_and_restore() {
     fs::write(&staged2, b"newer").unwrap();
     // 先确保目标存在
     fs::write(&kernel_path, b"current").unwrap();
-    let bak2 = replace_installed_kernel(&staged2, &kernel_path).await.unwrap();
+    let bak2 = replace_installed_kernel(&staged2, &kernel_path)
+        .await
+        .unwrap();
     assert!(bak2.is_some());
     assert_eq!(fs::read(&kernel_path).unwrap(), b"newer");
 }
@@ -353,12 +363,9 @@ async fn move_file_with_fallback_rename_and_copy() {
 #[tokio::test]
 async fn restore_kernel_from_backup_missing_errors() {
     let dir = tempfile::tempdir().unwrap();
-    let err = restore_kernel_from_backup(
-        &dir.path().join("k"),
-        &dir.path().join("missing.bak"),
-    )
-    .await
-    .unwrap_err();
+    let err = restore_kernel_from_backup(&dir.path().join("k"), &dir.path().join("missing.bak"))
+        .await
+        .unwrap_err();
     assert!(err.contains("备份"));
 }
 
@@ -458,10 +465,7 @@ async fn import_kernel_executable_inner_while_running_stops_first() {
     let dir = work.join("sing-box");
     fs::create_dir_all(&dir).unwrap();
     let kernel = dir.join("sing-box");
-    write_fake_kernel_script(
-        &kernel,
-        "sing-box version 1.0.0",
-    );
+    write_fake_kernel_script(&kernel, "sing-box version 1.0.0");
     // 覆盖 write：run 要 sleep
     fs::write(
         &kernel,
@@ -557,7 +561,9 @@ async fn replace_installed_kernel_rollback_path() {
     // staged 与目标同目录，rename 成功
     let staged = dir.path().join("staged");
     fs::write(&staged, b"new").unwrap();
-    let bak = replace_installed_kernel(&staged, &kernel_path).await.unwrap();
+    let bak = replace_installed_kernel(&staged, &kernel_path)
+        .await
+        .unwrap();
     assert!(bak.is_some());
     assert_eq!(fs::read(&kernel_path).unwrap(), b"new");
 
@@ -583,6 +589,9 @@ async fn stop_running_kernel_for_replace_when_already_stopped() {
     let r = stop_running_kernel_for_replace(&env.handle()).await;
     match r {
         Ok(()) => {}
-        Err(e) => assert!(e.contains("无法停止") || e.contains("进程"), "unexpected: {e}"),
+        Err(e) => assert!(
+            e.contains("无法停止") || e.contains("进程"),
+            "unexpected: {e}"
+        ),
     }
 }

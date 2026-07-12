@@ -278,10 +278,9 @@
 import { ref, computed, onMounted, onUnmounted, h, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useSubStore } from '@/stores/subscription/SubStore'
-import { useAppStore } from '@/stores'
+import { useAppStore, useKernelStore } from '@/stores'
 import { subscriptionService } from '@/services/subscription-service'
 import type { SubscriptionPersistResult } from '@/services/subscription-service'
-import { kernelService } from '@/services/kernel-service'
 import { useI18n } from 'vue-i18n'
 import { DEFAULT_AUTO_UPDATE_MINUTES, type FrontendSubscription } from '@/stores/subscription/types'
 import {
@@ -330,6 +329,7 @@ interface SubscriptionForm extends Subscription {
 const message = useMessage()
 const subStore = useSubStore()
 const appStore = useAppStore()
+const kernelStore = useKernelStore()
 const { t } = useI18n()
 
 const showAddModal = ref(false)
@@ -432,7 +432,7 @@ const getDropdownOptions = (index: number): DropdownOption[] => [
     icon: () => h('span', { class: 'icon' }, [h(RefreshOutline)]),
     props: {
       onClick: () =>
-        refreshSubscription(index, subStore.activeIndex === index && appStore.isRunning),
+        refreshSubscription(index, subStore.activeIndex === index && kernelStore.isRunning),
     },
   },
   {
@@ -627,7 +627,8 @@ const refreshSubscription = async (index: number, applyRuntime = false, silent =
 
   const persistOptions = {
     ...resolvePersistOptionsFor(item),
-    applyRuntime,
+    // 下载只负责持久化；应用活动配置在下方通过单一入口完成。
+    applyRuntime: false,
   }
 
   try {
@@ -656,6 +657,7 @@ const refreshSubscription = async (index: number, applyRuntime = false, silent =
     if (savedPath && applyRuntime) {
       await subscriptionService.setActiveConfig(savedPath, {
         useOriginalConfig: item.useOriginalConfig,
+        restartIfRunning: true,
       })
       await appStore.setActiveConfigPath(savedPath)
     }
@@ -684,11 +686,9 @@ const rollbackSubscription = async (index: number) => {
     if (subStore.activeIndex === index) {
       await subscriptionService.setActiveConfig(item.configPath, {
         useOriginalConfig: item.useOriginalConfig,
+        restartIfRunning: true,
       })
       await appStore.setActiveConfigPath(item.configPath)
-      if (appStore.isRunning) {
-        await kernelService.restartKernel()
-      }
     }
   } catch (error) {
     message.error(t('sub.rollbackFailed') + error)
@@ -851,8 +851,8 @@ const saveCurrentConfig = async () => {
     isConfigLoading.value = true
     const activeItem = subStore.getActiveSubscription()
     const persistOptions = activeItem?.configPath
-      ? { configPath: activeItem.configPath, applyRuntime: true }
-      : { fileName: generateConfigFileName(activeItem?.name || 'sub'), applyRuntime: true }
+      ? { configPath: activeItem.configPath, applyRuntime: false }
+      : { fileName: generateConfigFileName(activeItem?.name || 'sub'), applyRuntime: false }
 
     const savedResult = await subscriptionService.addManualSubscription(
       currentConfig.value,
@@ -860,6 +860,14 @@ const saveCurrentConfig = async () => {
       persistOptions,
     )
     const savedPath = savedResult.configPath
+
+    if (savedPath) {
+      await subscriptionService.setActiveConfig(savedPath, {
+        useOriginalConfig: activeItem?.useOriginalConfig ?? false,
+        restartIfRunning: savedResult.configChanged,
+      })
+      await appStore.setActiveConfigPath(savedPath)
+    }
 
     if (activeItem) {
       if (activeItem.isManual) {
@@ -881,7 +889,7 @@ const saveCurrentConfig = async () => {
 const { startAutoUpdateLoop, stopAutoUpdateLoop } = useSubscriptionAutoUpdate({
   getSubscriptions: () => subStore.list,
   getActiveIndex: () => subStore.activeIndex,
-  isKernelRunning: () => appStore.isRunning,
+  isKernelRunning: () => kernelStore.isRunning,
   defaultIntervalMinutes: DEFAULT_AUTO_UPDATE_MINUTES,
   onRefresh: refreshSubscription,
 })

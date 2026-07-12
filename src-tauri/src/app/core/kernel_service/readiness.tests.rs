@@ -1,6 +1,6 @@
 use super::*;
-use crate::app::core::kernel_service::PROCESS_MANAGER;
 use crate::app::constants::paths;
+use crate::app::core::kernel_service::PROCESS_MANAGER;
 use crate::test_support::TempWorkspace;
 use std::fs;
 use std::path::Path;

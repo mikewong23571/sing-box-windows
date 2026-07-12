@@ -177,4 +177,3 @@ pub(crate) fn perform_cleanup(log_dir: &Path) -> io::Result<()> {
 #[cfg(test)]
 #[path = "log_util.tests.rs"]
 mod tests;
-

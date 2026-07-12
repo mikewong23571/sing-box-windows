@@ -19,15 +19,14 @@ use crate::app::core::kernel_service::status::{
 };
 use crate::app::core::kernel_service::PROCESS_MANAGER;
 use crate::app::core::proxy_service::{
-    apply_dns_strategy_to_config, apply_system_proxy_for_state, build_clash_delay_url,
-    get_proxies, inject_custom_rules_into_config_file_with_storage, measure_proxy_delay,
-    update_dns_strategy_on_path, write_inbounds_for_state, ProxyRuntimeState,
-    RecordingSystemProxy,
+    apply_dns_strategy_to_config, apply_system_proxy_for_state, build_clash_delay_url, get_proxies,
+    inject_custom_rules_into_config_file_with_storage, measure_proxy_delay,
+    update_dns_strategy_on_path, write_inbounds_for_state, ProxyRuntimeState, RecordingSystemProxy,
 };
 use crate::app::core::tun_profile::TunProxyOptions;
 use crate::app::network::subscription_service::auto_update::{
-    apply_health_patch, build_failure_health_patch, build_success_health_patch, calc_backoff_minutes,
-    should_run_for_subscription,
+    apply_health_patch, build_failure_health_patch, build_success_health_patch,
+    calc_backoff_minutes, should_run_for_subscription,
 };
 use crate::app::network::subscription_service::materializer::{
     try_decode_base64_to_text, write_downloaded_subscription_config,
@@ -38,8 +37,8 @@ use crate::app::network::subscription_service::{
 };
 use crate::app::runtime::change::{plan_runtime_actions, RuntimeApplyOptions, RuntimeChange};
 use crate::app::runtime::config_update::{
-    resolve_patch_mode_for_subscription, resolve_patch_mode_with_hint, sync_settings_to_config_file,
-    ConfigPatchMode,
+    resolve_patch_mode_for_subscription, resolve_patch_mode_with_hint,
+    sync_settings_to_config_file, ConfigPatchMode,
 };
 use crate::app::runtime::orchestrator::runtime_state_from_config;
 use crate::app::singbox::config_generator::generate_base_config;
@@ -51,8 +50,8 @@ use crate::app::storage::state_model::{
     AppConfig, LocaleConfig, Subscription, ThemeConfig, UpdateConfig, WindowConfig,
 };
 use crate::app::system::backup_service::{
-    apply_snapshot_to_storage, encode_path_for_snapshot, parse_snapshot, rewrite_paths_for_snapshot,
-    write_config_content, SnapshotPathKind,
+    apply_snapshot_to_storage, encode_path_for_snapshot, parse_snapshot,
+    rewrite_paths_for_snapshot, write_config_content, SnapshotPathKind,
 };
 use crate::app::system::config_service::{
     backup_corrupted_config, ensure_private_ip_rule, try_restore_from_bak, write_default_config,
@@ -222,7 +221,10 @@ async fn l3_02_materialize_manual_subscription_and_persist() {
     )
     .unwrap();
     let text = fs::read_to_string(&target).unwrap();
-    assert!(text.contains("outbounds"), "materializer must write outbounds");
+    assert!(
+        text.contains("outbounds"),
+        "materializer must write outbounds"
+    );
 
     let sub = sample_sub(target.to_str().unwrap(), false);
     env.storage.save_subscriptions(&[sub]).await.unwrap();
@@ -280,7 +282,11 @@ async fn l3_04_runtime_plan_patch_and_recording_proxy() {
         RuntimeChange::SubscriptionApplied,
         &RuntimeApplyOptions::new("e2e-04").patch_active_config(true),
     );
-    assert!(plan.apply_proxy_runtime && plan.auto_manage_kernel && plan.patch_active_config);
+    assert!(plan.apply_proxy_runtime && plan.patch_active_config);
+    assert_eq!(
+        plan.kernel_impact,
+        crate::app::core::kernel_service::KernelChangeImpact::PersistOnly
+    );
 
     sync_settings_to_config_file(&env.config_path, &cfg, ConfigPatchMode::PortsOnly).unwrap();
     let state = runtime_state_from_config(&cfg);
@@ -289,7 +295,9 @@ async fn l3_04_runtime_plan_patch_and_recording_proxy() {
     apply_system_proxy_for_state(&state, &rec).unwrap();
     assert_eq!(rec.enables.lock().unwrap().len(), 1);
     assert_eq!(rec.enables.lock().unwrap()[0].1, 18881);
-    assert!(fs::read_to_string(&env.config_path).unwrap().contains("inbounds"));
+    assert!(fs::read_to_string(&env.config_path)
+        .unwrap()
+        .contains("inbounds"));
 }
 
 // ---------------------------------------------------------------------------
@@ -353,11 +361,15 @@ async fn l3_07_process_restart_cycle_with_workdir() {
     assert!(kdir.starts_with(&env.work_dir));
 
     let pm = ProcessManager::new();
-    pm.start_inner::<tauri::Wry>(None, &env.config_path, false).await.unwrap();
+    pm.start_inner::<tauri::Wry>(None, &env.config_path, false)
+        .await
+        .unwrap();
     assert!(pm.is_running().await);
     pm.stop::<tauri::Wry>(None).await.unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    pm.start_inner::<tauri::Wry>(None, &env.config_path, false).await.unwrap();
+    pm.start_inner::<tauri::Wry>(None, &env.config_path, false)
+        .await
+        .unwrap();
     assert!(pm.is_running().await);
     pm.stop::<tauri::Wry>(None).await.unwrap();
 
@@ -428,7 +440,13 @@ async fn l3_09_proxy_modes_disk_and_recording() {
     let mut cfg = env.storage.get_app_config().await.unwrap();
     cfg.system_proxy_enabled = true;
     env.storage.save_app_config(&cfg).await.unwrap();
-    assert!(env.storage.get_app_config().await.unwrap().system_proxy_enabled);
+    assert!(
+        env.storage
+            .get_app_config()
+            .await
+            .unwrap()
+            .system_proxy_enabled
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -505,7 +523,9 @@ async fn l3_11_clash_api_delay_and_process_health() {
 
     // process + status module
     let pm = ProcessManager::new();
-    pm.start_inner::<tauri::Wry>(None, &env.config_path, false).await.unwrap();
+    pm.start_inner::<tauri::Wry>(None, &env.config_path, false)
+        .await
+        .unwrap();
     let health = kernel_check_health(Some(port)).await.unwrap();
     assert!(health.get("healthy").is_some());
     pm.stop::<tauri::Wry>(None).await.unwrap();
@@ -522,10 +542,8 @@ async fn l3_12_backup_snapshot_rewrite_and_storage() {
     fs::create_dir_all(abs.parent().unwrap()).unwrap();
     fs::write(&abs, "{}").unwrap();
 
-    let encoded = encode_path_for_snapshot(
-        &abs.to_string_lossy(),
-        SnapshotPathKind::SubscriptionConfig,
-    );
+    let encoded =
+        encode_path_for_snapshot(&abs.to_string_lossy(), SnapshotPathKind::SubscriptionConfig);
     assert!(!encoded.is_empty());
 
     let app = AppConfig {
@@ -552,7 +570,10 @@ async fn l3_12_backup_snapshot_rewrite_and_storage() {
     assert!(snap_path.exists());
 
     env.storage.save_app_config(&app2).await.unwrap();
-    assert_eq!(env.storage.get_app_config().await.unwrap().proxy_port, 17171);
+    assert_eq!(
+        env.storage.get_app_config().await.unwrap().proxy_port,
+        17171
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -568,7 +589,11 @@ async fn l3_13_kernel_paths_storage_and_validate() {
     assert!(kpath.exists());
 
     let cfg = env.storage.get_app_config().await.unwrap();
-    assert!(cfg.active_config_path.as_ref().unwrap().contains("config.json"));
+    assert!(cfg
+        .active_config_path
+        .as_ref()
+        .unwrap()
+        .contains("config.json"));
 
     // 通过 start_inner 间接覆盖 check 路径（validate_config 为 private）
     let pm = ProcessManager::new();
@@ -593,10 +618,15 @@ async fn l3_14_install_kernel_start_and_persist_port() {
     env.storage.save_app_config(&cfg).await.unwrap();
 
     let pm = ProcessManager::new();
-    pm.start_inner::<tauri::Wry>(None, &env.config_path, false).await.unwrap();
+    pm.start_inner::<tauri::Wry>(None, &env.config_path, false)
+        .await
+        .unwrap();
     assert!(pm.is_running().await);
     pm.stop::<tauri::Wry>(None).await.unwrap();
-    assert_eq!(env.storage.get_app_config().await.unwrap().proxy_port, 18282);
+    assert_eq!(
+        env.storage.get_app_config().await.unwrap().proxy_port,
+        18282
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -616,14 +646,7 @@ async fn l3_15_auto_update_health_materialize_storage() {
 
     let mut sub = sample_sub(target.to_str().unwrap(), false);
     let now = 1_700_000_000_000u64;
-    let fail = build_failure_health_patch(
-        sub.config_path.clone(),
-        &sub.url,
-        now,
-        0,
-        60,
-        "timeout",
-    );
+    let fail = build_failure_health_patch(sub.config_path.clone(), &sub.url, now, 0, 60, "timeout");
     apply_health_patch(&mut sub, &fail);
     assert!(sub.auto_update_fail_count.unwrap_or(0) >= 1);
     let backoff = calc_backoff_minutes(60, sub.auto_update_fail_count.unwrap_or(1));
@@ -631,7 +654,10 @@ async fn l3_15_auto_update_health_materialize_storage() {
 
     let ok = build_success_health_patch(sub.config_path.clone(), &sub.url, now + 1);
     apply_health_patch(&mut sub, &ok);
-    env.storage.save_subscriptions(&[sub.clone()]).await.unwrap();
+    env.storage
+        .save_subscriptions(&[sub.clone()])
+        .await
+        .unwrap();
     let got = env.storage.get_subscriptions().await.unwrap();
     assert!(got[0].config_path.as_ref().unwrap().ends_with("auto.json"));
     assert!(target.exists());
@@ -646,7 +672,9 @@ async fn l3_16_idle_process_cleanup_and_storage() {
     let env = Env::new().await;
     let pm = ProcessManager::new();
     pm.clear_managed_pid();
-    pm.kill_existing_processes::<tauri::Wry>(None).await.unwrap();
+    pm.kill_existing_processes::<tauri::Wry>(None)
+        .await
+        .unwrap();
     assert!(!pm.is_running().await);
 
     env.storage
@@ -787,9 +815,13 @@ async fn l3_20_golden_subscription_rules_proxy_process() {
         RuntimeChange::SubscriptionApplied,
         &RuntimeApplyOptions::new("golden")
             .patch_active_config(true)
-            .force_restart(true),
+            .restart_if_running(true),
     );
-    assert!(plan.apply_proxy_runtime && plan.auto_manage_kernel);
+    assert!(plan.apply_proxy_runtime);
+    assert_eq!(
+        plan.kernel_impact,
+        crate::app::core::kernel_service::KernelChangeImpact::RestartIfRunning
+    );
 
     let state = runtime_state_from_config(&cfg);
     write_inbounds_for_state(&manual, &state).unwrap();
@@ -798,7 +830,9 @@ async fn l3_20_golden_subscription_rules_proxy_process() {
     assert_eq!(rec.enables.lock().unwrap()[0].1, 17771);
 
     let pm = ProcessManager::new();
-    pm.start_inner::<tauri::Wry>(None, &manual, false).await.unwrap();
+    pm.start_inner::<tauri::Wry>(None, &manual, false)
+        .await
+        .unwrap();
     assert!(pm.is_running().await);
     pm.stop::<tauri::Wry>(None).await.unwrap();
 
@@ -881,7 +915,10 @@ async fn l3_23_backup_apply_to_storage_and_rewrite() {
     let _warnings = apply_snapshot_to_storage(&env.storage, &snapshot)
         .await
         .unwrap();
-    assert_eq!(env.storage.get_app_config().await.unwrap().proxy_port, 17999);
+    assert_eq!(
+        env.storage.get_app_config().await.unwrap().proxy_port,
+        17999
+    );
 }
 
 // ---------------------------------------------------------------------------

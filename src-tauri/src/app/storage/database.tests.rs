@@ -31,8 +31,14 @@ async fn two_independent_databases_each_get_schema() {
     cfg.proxy_port = 28080;
     db_b.save_app_config(&cfg).await.unwrap();
 
-    assert_eq!(db_a.load_app_config().await.unwrap().unwrap().proxy_port, 18080);
-    assert_eq!(db_b.load_app_config().await.unwrap().unwrap().proxy_port, 28080);
+    assert_eq!(
+        db_a.load_app_config().await.unwrap().unwrap().proxy_port,
+        18080
+    );
+    assert_eq!(
+        db_b.load_app_config().await.unwrap().unwrap().proxy_port,
+        28080
+    );
     db_a.close().await.unwrap();
     db_b.close().await.unwrap();
 }
@@ -87,7 +93,10 @@ async fn theme_locale_window_update_and_generic_kv() {
     let mut theme_bad = theme.clone();
     theme_bad.mode = "rainbow".into();
     db.save_theme_config(&theme_bad).await.unwrap();
-    assert_eq!(db.load_theme_config().await.unwrap().unwrap().mode, "system");
+    assert_eq!(
+        db.load_theme_config().await.unwrap().unwrap().mode,
+        "system"
+    );
 
     let locale = LocaleConfig {
         locale: "en-US".into(),
@@ -164,5 +173,7 @@ fn parse_tun_route_exclude_address_column_handles_edge_cases() {
 fn serialize_optional_json_works() {
     let some = serialize_optional_json(&Some(vec!["a".to_string()])).unwrap();
     assert!(some.unwrap().contains("a"));
-    assert!(serialize_optional_json::<Vec<String>>(&None).unwrap().is_none());
+    assert!(serialize_optional_json::<Vec<String>>(&None)
+        .unwrap()
+        .is_none());
 }

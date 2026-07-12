@@ -22,11 +22,13 @@
             :t="t"
             :locale-store="localeStore"
             :auto-start="autoStart"
+            :auto-start-kernel="appStore.autoStartKernel"
             :auto-hide-to-tray-on-autostart="autoHideToTrayOnAutostart"
             :tray-close-behavior="trayCloseBehavior"
             :language-options="languageOptions"
             :tray-close-behavior-options="trayCloseBehaviorOptions"
             :on-auto-start-change="onAutoStartChange"
+            :on-auto-start-kernel-change="onAutoStartKernelChange"
             :on-auto-hide-to-tray-on-autostart-change="onAutoHideToTrayOnAutostartChange"
             :on-tray-close-behavior-change="onTrayCloseBehaviorChange"
             :on-change-language="handleChangeLanguage"
@@ -364,6 +366,16 @@ const onAutoStartChange = async (value: boolean) => {
   } catch (error) {
     message.error(t('common.saveFailed'))
     autoStart.value = !value
+  }
+}
+
+const onAutoStartKernelChange = async (value: boolean) => {
+  try {
+    await appStore.toggleAutoStartKernel(value)
+    message.success(t('common.saveSuccess'))
+  } catch (error) {
+    console.error('保存内核自动启动设置失败:', error)
+    message.error(t('common.saveFailed'))
   }
 }
 

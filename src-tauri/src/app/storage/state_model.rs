@@ -62,7 +62,7 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            auto_start_kernel: true,
+            auto_start_kernel: false,
             auto_start_app: false,
             auto_hide_to_tray_on_autostart: true,
             tray_close_behavior: "hide".to_string(),

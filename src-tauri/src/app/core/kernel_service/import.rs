@@ -1,10 +1,15 @@
 use crate::app::constants::paths;
+#[cfg(test)]
 use crate::app::core::kernel_service::runtime::stop_kernel_with_process;
-use crate::app::core::kernel_service::status::{is_kernel_running, is_kernel_running_with_process};
+use crate::app::core::kernel_service::status::is_kernel_running;
+#[cfg(test)]
+use crate::app::core::kernel_service::status::is_kernel_running_with_process;
 use crate::app::core::kernel_service::versioning::extract_clean_version;
+#[cfg(test)]
 use crate::app::core::kernel_service::KernelProcessControl;
-use crate::app::runtime::change::{RuntimeApplyOptions, RuntimeChange};
-use crate::app::runtime::orchestrator::apply_runtime_change;
+use crate::app::core::kernel_service::{
+    orchestrated_resume_after_maintenance, orchestrated_suspend_for_maintenance,
+};
 use crate::app::storage::enhanced_storage_service::{
     db_get_app_config, db_save_app_config_internal,
 };
@@ -13,7 +18,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Runtime};
 use tokio::process::Command;
-use tracing::{info, warn};
+#[cfg(test)]
+use tracing::info;
+use tracing::warn;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct KernelImportResult {
@@ -106,15 +113,28 @@ pub(crate) async fn import_kernel_executable_inner<R: Runtime>(
     let kernel_path = paths::get_kernel_path();
     let was_running_before_import = is_kernel_running().await.unwrap_or(false);
     if was_running_before_import {
-        stop_running_kernel_for_replace(app_handle).await?;
+        let result = orchestrated_suspend_for_maintenance(
+            app_handle.clone(),
+            "kernel-manual-import".to_string(),
+        )
+        .await?;
+        if !result
+            .get("success")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+        {
+            return Err("无法停止当前内核进程，已中止导入".to_string());
+        }
     }
 
     let backup_path = replace_installed_kernel(&staged_binary_path, &kernel_path).await?;
 
     let restarted = if was_running_before_import {
-        let import_options = RuntimeApplyOptions::new("kernel-manual-import").force_restart(true);
-        if let Err(error) =
-            apply_runtime_change(app_handle, RuntimeChange::KernelUpdated, import_options).await
+        if let Err(error) = orchestrated_resume_after_maintenance(
+            app_handle.clone(),
+            "kernel-manual-import".to_string(),
+        )
+        .await
         {
             warn!("导入内核后重启失败: {}", error);
         }
@@ -124,11 +144,11 @@ pub(crate) async fn import_kernel_executable_inner<R: Runtime>(
             if let Some(path) = backup_path.as_deref() {
                 warn!("新内核重启失败，尝试回滚到旧内核: {}", path);
                 restore_kernel_from_backup(&kernel_path, Path::new(path)).await?;
-                let rollback_options =
-                    RuntimeApplyOptions::new("kernel-manual-import-rollback").force_restart(true);
-                if let Err(error) =
-                    apply_runtime_change(app_handle, RuntimeChange::KernelUpdated, rollback_options)
-                        .await
+                if let Err(error) = orchestrated_resume_after_maintenance(
+                    app_handle.clone(),
+                    "kernel-manual-import-rollback".to_string(),
+                )
+                .await
                 {
                     warn!("导入内核回滚后重启失败: {}", error);
                 }
@@ -248,6 +268,7 @@ pub(crate) async fn validate_kernel_binary(binary_path: &Path) -> Result<String,
 }
 
 /// 停止运行中的内核以便导入替换（process 可注入）。
+#[cfg(test)]
 pub(crate) async fn stop_running_kernel_for_replace_with_process<R: Runtime>(
     process: &dyn KernelProcessControl<R>,
     app_handle: &AppHandle<R>,
@@ -256,7 +277,10 @@ pub(crate) async fn stop_running_kernel_for_replace_with_process<R: Runtime>(
 
     for attempt in 1..=5 {
         let _ = stop_kernel_with_process(process, Some(app_handle)).await;
-        if !is_kernel_running_with_process(process).await.unwrap_or(true) {
+        if !is_kernel_running_with_process(process)
+            .await
+            .unwrap_or(true)
+        {
             info!("内核已停止，可继续替换");
             return Ok(());
         }
@@ -271,13 +295,17 @@ pub(crate) async fn stop_running_kernel_for_replace_with_process<R: Runtime>(
         .map_err(|e| format!("强制终止内核进程失败: {}", e))?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
-    if is_kernel_running_with_process(process).await.unwrap_or(false) {
+    if is_kernel_running_with_process(process)
+        .await
+        .unwrap_or(false)
+    {
         return Err("无法停止当前内核进程，已中止导入".to_string());
     }
 
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) async fn stop_running_kernel_for_replace<R: Runtime>(
     app_handle: &AppHandle<R>,
 ) -> Result<(), String> {
@@ -352,7 +380,10 @@ pub(crate) async fn move_file_with_fallback(from: &Path, to: &Path) -> Result<()
 }
 
 /// 从备份恢复内核文件。
-pub(crate) async fn restore_kernel_from_backup(kernel_path: &Path, backup_path: &Path) -> Result<(), String> {
+pub(crate) async fn restore_kernel_from_backup(
+    kernel_path: &Path,
+    backup_path: &Path,
+) -> Result<(), String> {
     if !backup_path.exists() {
         return Err("回滚失败：未找到备份内核".to_string());
     }
@@ -443,7 +474,10 @@ pub(crate) fn extract_tar_archive(archive_path: &Path, extract_to: &Path) -> Res
         .map_err(|e| format!("解压 tar 失败: {}", e))
 }
 
-pub(crate) fn find_executable_file(search_dir: &Path, executable_name: &str) -> Result<PathBuf, String> {
+pub(crate) fn find_executable_file(
+    search_dir: &Path,
+    executable_name: &str,
+) -> Result<PathBuf, String> {
     let direct_path = search_dir.join(executable_name);
     if direct_path.exists() && direct_path.is_file() {
         return Ok(direct_path);
@@ -487,4 +521,3 @@ pub(crate) fn set_executable_permission(_file_path: &Path) -> Result<(), String>
 #[cfg(test)]
 #[path = "import.tests.rs"]
 mod tests;
-

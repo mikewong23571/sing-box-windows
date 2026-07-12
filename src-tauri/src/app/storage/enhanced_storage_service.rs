@@ -269,7 +269,9 @@ pub fn save_startup_preferences_sync<R: tauri::Runtime>(
 
 // Tauri 命令实现
 #[tauri::command]
-pub async fn db_get_app_config<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<AppConfig, String> {
+pub async fn db_get_app_config<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<AppConfig, String> {
     db_get_app_config_internal(&app).await
 }
 
@@ -533,10 +535,7 @@ mod tests {
             Some(0)
         );
         storage.save_active_subscription_index(None).await.unwrap();
-        assert_eq!(
-            storage.get_active_subscription_index().await.unwrap(),
-            None
-        );
+        assert_eq!(storage.get_active_subscription_index().await.unwrap(), None);
 
         storage.save_config("k", &"v".to_string()).await.unwrap();
         let v: Option<String> = storage.get_config("k").await.unwrap();

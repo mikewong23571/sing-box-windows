@@ -2,20 +2,23 @@ use crate::app::constants::common::messages;
 use crate::app::core::kernel_service::guard::{disable_kernel_guard, enable_kernel_guard};
 use crate::app::core::kernel_service::orchestrator::execute_kernel_operation;
 use crate::app::core::kernel_service::readiness::{
-    classify_startup_stability_failure,
-    verify_kernel_startup_stability_with_process_with_config, StabilityCheckConfig,
+    classify_startup_stability_failure, verify_kernel_startup_stability_with_process_with_config,
+    StabilityCheckConfig,
 };
 use crate::app::core::kernel_service::relay::{
     cleanup_event_relay_tasks, start_websocket_relay, SHOULD_STOP_EVENTS,
 };
-use crate::app::core::kernel_service::state::{KernelState, KERNEL_STATE};
+use crate::app::core::kernel_service::state::{
+    plan_kernel_transition, KernelAction, KernelChangeImpact, KernelDesiredState,
+    KernelObservedState, KernelRequestKind, KernelState, KERNEL_STATE,
+};
 use crate::app::core::kernel_service::status::is_kernel_running_with_process;
-use crate::app::core::kernel_service::{process_controller, KernelProcessControl, PROCESS_MANAGER};
 use crate::app::core::kernel_service::utils::{
     build_kernel_lifecycle_payload, emit_kernel_error_with_context, emit_kernel_started,
     emit_kernel_starting, emit_kernel_status, emit_kernel_stopped, resolve_config_path,
     KernelStatusPayload,
 };
+use crate::app::core::kernel_service::{process_controller, KernelProcessControl, PROCESS_MANAGER};
 use crate::app::core::proxy_service::{
     apply_proxy_runtime_state, apply_proxy_runtime_state_with, update_dns_strategy,
     ProxyRuntimeState, SystemProxyPort,
@@ -44,7 +47,6 @@ pub struct ProxyOverrides {
     pub tun_options: Option<TunProxyOptions>,
     pub system_proxy_enabled: Option<bool>,
     pub tun_enabled: Option<bool>,
-    pub keep_alive: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,7 +78,10 @@ pub(crate) fn classify_runtime_start_failure(detail: &str) -> &'static str {
 }
 
 /// 统一内核命令 JSON 响应（纯逻辑）。
-pub(crate) fn kernel_command_result(success: bool, message: impl Into<String>) -> serde_json::Value {
+pub(crate) fn kernel_command_result(
+    success: bool,
+    message: impl Into<String>,
+) -> serde_json::Value {
     json!({
         "success": success,
         "message": message.into()
@@ -182,17 +187,20 @@ pub(crate) fn resolve_proxy_runtime_state_from_config(
     let mut app_config = app_config.clone();
     apply_proxy_overrides_to_app_config(&mut app_config, overrides);
 
-    let tun_options = overrides.tun_options.clone().unwrap_or_else(|| TunProxyOptions {
-        ipv4_address: app_config.tun_ipv4.clone(),
-        ipv6_address: app_config.tun_ipv6.clone(),
-        mtu: app_config.tun_mtu,
-        auto_route: app_config.tun_auto_route,
-        strict_route: app_config.tun_strict_route,
-        stack: app_config.tun_stack.clone(),
-        enable_ipv6: app_config.tun_enable_ipv6,
-        route_exclude_address: app_config.tun_route_exclude_address.clone(),
-        interface_name: None,
-    });
+    let tun_options = overrides
+        .tun_options
+        .clone()
+        .unwrap_or_else(|| TunProxyOptions {
+            ipv4_address: app_config.tun_ipv4.clone(),
+            ipv6_address: app_config.tun_ipv6.clone(),
+            mtu: app_config.tun_mtu,
+            auto_route: app_config.tun_auto_route,
+            strict_route: app_config.tun_strict_route,
+            stack: app_config.tun_stack.clone(),
+            enable_ipv6: app_config.tun_enable_ipv6,
+            route_exclude_address: app_config.tun_route_exclude_address.clone(),
+            interface_name: None,
+        });
 
     let proxy_state = ProxyRuntimeState {
         proxy_port: app_config.proxy_port,
@@ -270,6 +278,15 @@ pub(crate) async fn prepare_kernel_runtime_before_start_with_deps<R: tauri::Runt
     process: &dyn KernelProcessControl<R>,
     proxy: &dyn SystemProxyPort,
 ) -> Result<(), String> {
+    if let Err(error) =
+        crate::app::core::kernel_service::embedded::ensure_embedded_kernel(app_handle).await
+    {
+        warn!("准备内嵌内核失败，将继续使用现有内核: {}", error);
+    }
+    if let Err(error) = crate::app::core::kernel_service::embedded::ensure_external_ui().await {
+        warn!("准备外部控制面板失败，内核仍可继续启动: {}", error);
+    }
+
     crate::app::system::config_service::ensure_singbox_config(app_handle)
         .await
         .map_err(|e| format!("准备内核配置失败: {}", e))?;
@@ -354,12 +371,9 @@ pub(crate) async fn start_kernel_process_and_verify_with_config<R: tauri::Runtim
     }
 
     if process.is_running().await {
-        if let Err(e) = verify_kernel_startup_stability_with_process_with_config(
-            process,
-            api_port,
-            stability,
-        )
-        .await
+        if let Err(e) =
+            verify_kernel_startup_stability_with_process_with_config(process, api_port, stability)
+                .await
         {
             KERNEL_STATE.update_readiness(|readiness| {
                 readiness.api_ready = false;
@@ -371,15 +385,13 @@ pub(crate) async fn start_kernel_process_and_verify_with_config<R: tauri::Runtim
         return Ok(());
     }
 
-    process.start(None, config_path, tun_enabled).await
+    process
+        .start(None, config_path, tun_enabled)
+        .await
         .map_err(|e| e.to_string())?;
 
-    if let Err(e) = verify_kernel_startup_stability_with_process_with_config(
-        process,
-        api_port,
-        stability,
-    )
-    .await
+    if let Err(e) =
+        verify_kernel_startup_stability_with_process_with_config(process, api_port, stability).await
     {
         if let Some(stderr_output) = process.read_stderr_output().await {
             let trimmed = stderr_output.trim();
@@ -426,13 +438,9 @@ pub(crate) async fn start_kernel_with_state_with_process<R: Runtime>(
         resolved.proxy.proxy_port,
     );
 
-    if let Err(e) = prepare_kernel_runtime_before_start_with_deps(
-        &app_handle,
-        resolved,
-        process,
-        system_proxy,
-    )
-    .await
+    if let Err(e) =
+        prepare_kernel_runtime_before_start_with_deps(&app_handle, resolved, process, system_proxy)
+            .await
     {
         KERNEL_STATE.mark_failed();
         let detail = e;
@@ -469,7 +477,10 @@ pub(crate) async fn start_kernel_with_state_with_process<R: Runtime>(
                 readiness.relay_ready = false;
             });
             emit_kernel_status(&app_handle, &KernelStatusPayload::from_state());
-            return Ok(kernel_command_result(false, format_running_but_api_unavailable(&e)));
+            return Ok(kernel_command_result(
+                false,
+                format_running_but_api_unavailable(&e),
+            ));
         }
 
         match start_websocket_relay(app_handle.clone(), Some(resolved.api_port)).await {
@@ -503,7 +514,10 @@ pub(crate) async fn start_kernel_with_state_with_process<R: Runtime>(
         return Ok(kernel_command_result(true, "内核已在运行中"));
     }
 
-    if is_kernel_running_with_process(process).await.unwrap_or(false) {
+    if is_kernel_running_with_process(process)
+        .await
+        .unwrap_or(false)
+    {
         if let Err(err) = try_cleanup_conflicting_kernel_with_process(process, &app_handle).await {
             KERNEL_STATE.mark_failed();
             let kernel_name = crate::platform::get_kernel_executable_name();
@@ -523,7 +537,10 @@ pub(crate) async fn start_kernel_with_state_with_process<R: Runtime>(
         }
 
         // 再次复核，避免平台命令执行成功但仍有残留进程占用端口。
-        if is_kernel_running_with_process(process).await.unwrap_or(false) {
+        if is_kernel_running_with_process(process)
+            .await
+            .unwrap_or(false)
+        {
             KERNEL_STATE.mark_failed();
             let kernel_name = crate::platform::get_kernel_executable_name();
             let details = format!("强制清理后仍检测到 {} 进程在运行", kernel_name);
@@ -562,7 +579,10 @@ pub(crate) async fn start_kernel_with_state_with_process<R: Runtime>(
         }
     };
 
-    match process.start(Some(&app_handle), &config_path, resolved.proxy.tun_enabled).await {
+    match process
+        .start(Some(&app_handle), &config_path, resolved.proxy.tun_enabled)
+        .await
+    {
         Ok(_) => {
             info!("? 内核进程启动成功，开始稳定性校验");
 
@@ -630,10 +650,7 @@ pub(crate) async fn start_kernel_with_state_with_process<R: Runtime>(
                         false,
                     );
 
-                    Ok(kernel_command_result(
-                        true,
-                        "内核启动成功，事件中继已启动",
-                    ))
+                    Ok(kernel_command_result(true, "内核启动成功，事件中继已启动"))
                 }
                 Err(e) => {
                     warn!("?? 事件中继启动失败: {}, 但内核进程已启动", e);
@@ -743,19 +760,28 @@ pub(crate) async fn restart_kernel_internal_with_process<R: Runtime>(
     let resolved = resolve_proxy_runtime_state(&app_handle, overrides).await?;
 
     // 先尝试停止，超时时强杀
-    let stop_result =
-        tokio::time::timeout(Duration::from_secs(4), stop_kernel_with_process(process, Some(&app_handle))).await;
+    let stop_result = tokio::time::timeout(
+        Duration::from_secs(4),
+        stop_kernel_with_process(process, Some(&app_handle)),
+    )
+    .await;
     match stop_result {
         Ok(Ok(_)) => info!("? 快速重启：停止阶段完成"),
         Ok(Err(e)) => {
             warn!("? 快速重启：停止失败，继续强杀: {}", e);
-            if let Err(e) = process.force_kill_kernel_processes_by_name(Some(&app_handle)).await {
+            if let Err(e) = process
+                .force_kill_kernel_processes_by_name(Some(&app_handle))
+                .await
+            {
                 error!("强制清理内核进程失败: {}", e);
             }
         }
         Err(_) => {
             warn!("? 快速重启：停止超时，强制清理");
-            if let Err(e) = process.force_kill_kernel_processes_by_name(Some(&app_handle)).await {
+            if let Err(e) = process
+                .force_kill_kernel_processes_by_name(Some(&app_handle))
+                .await
+            {
                 error!("强制清理内核进程失败: {}", e);
             }
         }
@@ -786,6 +812,7 @@ pub async fn orchestrated_start_kernel<R: Runtime>(
         event_handle,
         "kernel.start",
         async move {
+            KERNEL_STATE.set_desired_state(KernelDesiredState::Running);
             let resolved = resolve_proxy_runtime_state(&app_handle, overrides).await?;
             start_kernel_with_state(app_handle, &resolved).await
         }
@@ -801,7 +828,11 @@ pub async fn orchestrated_stop_kernel<R: Runtime>(
     execute_kernel_operation(
         event_handle,
         "kernel.stop",
-        async move { stop_kernel_command_impl(app_handle).await }.boxed(),
+        async move {
+            KERNEL_STATE.set_desired_state(KernelDesiredState::Stopped);
+            stop_kernel_command_impl(app_handle).await
+        }
+        .boxed(),
     )
     .await
 }
@@ -814,7 +845,197 @@ pub async fn orchestrated_restart_kernel<R: Runtime>(
     execute_kernel_operation(
         event_handle,
         "kernel.restart",
-        async move { restart_kernel_internal(app_handle, overrides).await }.boxed(),
+        async move {
+            let running = is_kernel_running_with_process::<R>(PROCESS_MANAGER.as_ref())
+                .await
+                .unwrap_or(false);
+            if !running {
+                return Ok(kernel_command_result(false, "内核未运行，无法执行重启"));
+            }
+            KERNEL_STATE.set_desired_state(KernelDesiredState::Running);
+            restart_kernel_internal(app_handle, overrides).await
+        }
+        .boxed(),
+    )
+    .await
+}
+
+/// 应用启动时唯一允许根据持久化策略改变期望状态的入口。
+pub async fn orchestrated_startup_reconcile<R: Runtime>(
+    app_handle: AppHandle<R>,
+    auto_start: bool,
+) -> Result<serde_json::Value, String> {
+    let event_handle = app_handle.clone();
+    execute_kernel_operation(
+        event_handle,
+        "kernel.startup-reconcile",
+        async move {
+            let desired = if auto_start {
+                KernelDesiredState::Running
+            } else {
+                KernelDesiredState::Stopped
+            };
+            KERNEL_STATE.set_desired_state(desired);
+
+            let running = is_kernel_running_with_process::<R>(PROCESS_MANAGER.as_ref())
+                .await
+                .unwrap_or(false);
+            let observed = if running {
+                KernelObservedState::Running
+            } else {
+                KERNEL_STATE.get_observed_state()
+            };
+            match plan_kernel_transition(
+                desired,
+                observed,
+                KernelRequestKind::StartupReconcile { auto_start },
+            ) {
+                KernelAction::Start => {
+                    let resolved =
+                        resolve_proxy_runtime_state(&app_handle, ProxyOverrides::default()).await?;
+                    start_kernel_with_state(app_handle, &resolved).await
+                }
+                KernelAction::Stop => stop_kernel_command_impl(app_handle).await,
+                _ => Ok(kernel_command_result(
+                    true,
+                    if auto_start {
+                        "内核已处于启动策略要求的状态"
+                    } else {
+                        "已按设置保持内核停止"
+                    },
+                )),
+            }
+        }
+        .boxed(),
+    )
+    .await
+}
+
+/// 配置、订阅和内核文件变更的生命周期入口。
+///
+/// 该入口不修改 desired state；RestartIfRunning 只会重启已经运行且期望保持运行的内核。
+pub async fn orchestrated_apply_change<R: Runtime>(
+    app_handle: AppHandle<R>,
+    impact: KernelChangeImpact,
+    reason: String,
+) -> Result<serde_json::Value, String> {
+    orchestrated_apply_change_with_deps(
+        app_handle,
+        impact,
+        reason,
+        Arc::clone(&PROCESS_MANAGER) as Arc<dyn KernelProcessControl<R>>,
+        Arc::new(crate::app::core::proxy_service::OsSystemProxy),
+    )
+    .await
+}
+
+pub async fn orchestrated_apply_change_with_deps<R: Runtime>(
+    app_handle: AppHandle<R>,
+    impact: KernelChangeImpact,
+    reason: String,
+    process: Arc<dyn KernelProcessControl<R>>,
+    system_proxy: Arc<dyn SystemProxyPort>,
+) -> Result<serde_json::Value, String> {
+    let event_handle = app_handle.clone();
+    execute_kernel_operation(
+        event_handle,
+        "kernel.apply-change",
+        async move {
+            let desired = KERNEL_STATE.get_desired_state();
+            let running = is_kernel_running_with_process::<R>(process.as_ref())
+                .await
+                .unwrap_or(false);
+            // 重启判定必须以注入进程控制器的实时状态为准。全局状态快照可能来自
+            // 前一轮操作；若进程已停止，配置变更绝不能因为陈旧的 observed state 启动内核。
+            let observed = if running {
+                KernelObservedState::Running
+            } else {
+                KernelObservedState::Stopped
+            };
+            let action = plan_kernel_transition(
+                desired,
+                observed,
+                KernelRequestKind::ApplyRuntimeChange(impact),
+            );
+
+            match action {
+                KernelAction::Restart => {
+                    info!("运行态变更需要重启内核: {}", reason);
+                    restart_kernel_internal_with_process(
+                        app_handle,
+                        ProxyOverrides::default(),
+                        process.as_ref(),
+                        system_proxy.as_ref(),
+                    )
+                    .await
+                }
+                KernelAction::HotApply => Ok(kernel_command_result(
+                    true,
+                    format!("运行态变更已热应用: {}", reason),
+                )),
+                _ => Ok(kernel_command_result(
+                    true,
+                    format!("配置已保存，内核状态保持不变: {}", reason),
+                )),
+            }
+        }
+        .boxed(),
+    )
+    .await
+}
+
+/// 暂停内核以执行二进制替换等维护操作，不改变用户期望状态。
+pub async fn orchestrated_suspend_for_maintenance<R: Runtime>(
+    app_handle: AppHandle<R>,
+    reason: String,
+) -> Result<serde_json::Value, String> {
+    let event_handle = app_handle.clone();
+    execute_kernel_operation(
+        event_handle,
+        "kernel.maintenance-suspend",
+        async move {
+            if !is_kernel_running_with_process::<R>(PROCESS_MANAGER.as_ref())
+                .await
+                .unwrap_or(false)
+            {
+                return Ok(kernel_command_result(true, "内核已停止，可执行维护"));
+            }
+            info!("暂停内核以执行维护: {}", reason);
+            stop_kernel_command_impl(app_handle).await
+        }
+        .boxed(),
+    )
+    .await
+}
+
+/// 维护完成后仅在用户期望状态仍为 Running 时恢复内核。
+pub async fn orchestrated_resume_after_maintenance<R: Runtime>(
+    app_handle: AppHandle<R>,
+    reason: String,
+) -> Result<serde_json::Value, String> {
+    let event_handle = app_handle.clone();
+    execute_kernel_operation(
+        event_handle,
+        "kernel.maintenance-resume",
+        async move {
+            if KERNEL_STATE.get_desired_state() != KernelDesiredState::Running {
+                return Ok(kernel_command_result(
+                    true,
+                    "维护完成，按用户期望保持内核停止",
+                ));
+            }
+            if is_kernel_running_with_process::<R>(PROCESS_MANAGER.as_ref())
+                .await
+                .unwrap_or(false)
+            {
+                return Ok(kernel_command_result(true, "维护完成，内核已在运行"));
+            }
+            info!("维护完成后恢复内核: {}", reason);
+            let resolved =
+                resolve_proxy_runtime_state(&app_handle, ProxyOverrides::default()).await?;
+            start_kernel_with_state(app_handle, &resolved).await
+        }
+        .boxed(),
     )
     .await
 }
@@ -829,7 +1050,6 @@ pub async fn kernel_start_enhanced(
     prefer_ipv6: Option<bool>,
     system_proxy_bypass: Option<String>,
     tun_options: Option<TunProxyOptions>,
-    keep_alive: Option<bool>,
     system_proxy_enabled: Option<bool>,
     tun_enabled: Option<bool>,
 ) -> Result<serde_json::Value, String> {
@@ -842,7 +1062,6 @@ pub async fn kernel_start_enhanced(
         tun_options,
         system_proxy_enabled,
         tun_enabled,
-        keep_alive,
     };
 
     orchestrated_start_kernel(app_handle, overrides).await
@@ -854,6 +1073,17 @@ pub async fn apply_proxy_settings(
     system_proxy_enabled: Option<bool>,
     tun_enabled: Option<bool>,
 ) -> Result<serde_json::Value, String> {
+    if !is_kernel_running_with_process::<tauri::Wry>(PROCESS_MANAGER.as_ref())
+        .await
+        .unwrap_or(false)
+    {
+        return Ok(json!({
+            "success": true,
+            "message": "代理设置已保存，将在下次启动内核时生效",
+            "runtime_applied": false
+        }));
+    }
+
     let overrides = ProxyOverrides {
         system_proxy_enabled,
         tun_enabled,
@@ -877,7 +1107,8 @@ pub async fn apply_proxy_settings(
         "success": true,
         "mode": resolved.derived_mode(),
         "system_proxy_enabled": resolved.proxy.system_proxy_enabled,
-        "tun_enabled": resolved.proxy.tun_enabled
+        "tun_enabled": resolved.proxy.tun_enabled,
+        "runtime_applied": true
     }))
 }
 
@@ -897,7 +1128,6 @@ pub async fn kernel_restart_fast(
     prefer_ipv6: Option<bool>,
     system_proxy_bypass: Option<String>,
     tun_options: Option<TunProxyOptions>,
-    keep_alive: Option<bool>,
     system_proxy_enabled: Option<bool>,
     tun_enabled: Option<bool>,
 ) -> Result<serde_json::Value, String> {
@@ -910,7 +1140,6 @@ pub async fn kernel_restart_fast(
         tun_options,
         system_proxy_enabled,
         tun_enabled,
-        keep_alive,
     };
 
     orchestrated_restart_kernel(app_handle, overrides).await
@@ -935,7 +1164,10 @@ pub async fn stop_kernel_with_process<R: Runtime>(
 
     // 快速轮询确认，避免固定长等待
     for i in 1..=2 {
-        if !is_kernel_running_with_process(process).await.unwrap_or(true) {
+        if !is_kernel_running_with_process(process)
+            .await
+            .unwrap_or(true)
+        {
             info!("? 内核停止成功（第{}次检查）", i);
             KERNEL_STATE.mark_stopped();
             return Ok("内核停止成功".to_string());
@@ -991,10 +1223,13 @@ mod tests {
         assert!(!cfg.tun_enabled);
         assert_eq!(cfg.api_port, 9999);
 
-        let resolved = resolve_proxy_runtime_state_from_config(&cfg, &ProxyOverrides {
-            proxy_mode: Some("tun".into()),
-            ..Default::default()
-        });
+        let resolved = resolve_proxy_runtime_state_from_config(
+            &cfg,
+            &ProxyOverrides {
+                proxy_mode: Some("tun".into()),
+                ..Default::default()
+            },
+        );
         assert!(resolved.proxy.tun_enabled);
         assert_eq!(resolved.derived_mode(), "tun");
 
@@ -1073,8 +1308,8 @@ mod tests {
 
     #[tokio::test]
     async fn stop_kernel_after_process_manager_start() {
-        use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::app::constants::paths;
+        use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::test_support::TempWorkspace;
         use std::fs;
 
@@ -1101,7 +1336,10 @@ exit 0
         let cfg = paths::get_config_dir().join("config.json");
         fs::create_dir_all(cfg.parent().unwrap()).unwrap();
         fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
-        PROCESS_MANAGER.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        PROCESS_MANAGER
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
         assert!(PROCESS_MANAGER.is_running().await);
         let r = stop_kernel::<tauri::Wry>(None).await;
         // 成功停止或快速失败均可，主要覆盖路径
@@ -1112,10 +1350,10 @@ exit 0
     #[tokio::test]
     async fn start_kernel_process_and_verify_with_fake_kernel_and_api() {
         use crate::app::constants::paths;
-        use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::app::core::kernel_service::readiness::{
             verify_kernel_startup_stability_with_config, StabilityCheckConfig,
         };
+        use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::test_support::TempWorkspace;
         use std::fs;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1165,7 +1403,10 @@ exit 0
         });
 
         // 先用 start_inner + 缩短的 stability 配置覆盖 verify 成功路径
-        PROCESS_MANAGER.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        PROCESS_MANAGER
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
         let short = StabilityCheckConfig {
             max_checks: 3,
             initial_retry_interval_ms: 50,
@@ -1178,7 +1419,10 @@ exit 0
         let _ = PROCESS_MANAGER.stop::<tauri::Wry>(None).await;
 
         // 再走组合 API
-        PROCESS_MANAGER.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        PROCESS_MANAGER
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
         // start_kernel_process_and_verify 在已运行时只做 stability
         let r = start_kernel_process_and_verify(&cfg, port, false).await;
         let _ = r; // may fail if default stability too strict without concurrent mock - still covers
@@ -1194,8 +1438,8 @@ exit 0
     #[tokio::test]
     async fn start_kernel_process_and_verify_fails_when_api_unreachable() {
         use crate::app::constants::paths;
-        use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::app::core::kernel_service::readiness::StabilityCheckConfig;
+        use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::test_support::TempWorkspace;
         use std::fs;
 
@@ -1230,9 +1474,15 @@ exit 0
             max_retry_interval_ms: 40,
             api_timeout_ms: 50,
         };
-        let err = start_kernel_process_and_verify_with_config::<tauri::Wry>(&**PROCESS_MANAGER, &cfg, 1, false, short)
-            .await
-            .expect_err("API unreachable should fail");
+        let err = start_kernel_process_and_verify_with_config::<tauri::Wry>(
+            &**PROCESS_MANAGER,
+            &cfg,
+            1,
+            false,
+            short,
+        )
+        .await
+        .expect_err("API unreachable should fail");
         assert!(
             err.contains("stability")
                 || err.contains("API")
@@ -1294,8 +1544,8 @@ exit 0
     #[tokio::test]
     async fn start_kernel_process_and_verify_success_with_short_stability() {
         use crate::app::constants::paths;
-        use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::app::core::kernel_service::readiness::StabilityCheckConfig;
+        use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::test_support::TempWorkspace;
         use std::fs;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1351,15 +1601,27 @@ exit 0
             api_timeout_ms: 200,
         };
         // 冷启动成功路径
-        start_kernel_process_and_verify_with_config::<tauri::Wry>(&**PROCESS_MANAGER, &cfg, port, false, short.clone())
-            .await
-            .expect("cold start with mock api");
+        start_kernel_process_and_verify_with_config::<tauri::Wry>(
+            &**PROCESS_MANAGER,
+            &cfg,
+            port,
+            false,
+            short.clone(),
+        )
+        .await
+        .expect("cold start with mock api");
         assert!(PROCESS_MANAGER.is_running().await);
 
         // 已运行再调一次：只做 stability 校验
-        start_kernel_process_and_verify_with_config::<tauri::Wry>(&**PROCESS_MANAGER, &cfg, port, false, short)
-            .await
-            .expect("already running path");
+        start_kernel_process_and_verify_with_config::<tauri::Wry>(
+            &**PROCESS_MANAGER,
+            &cfg,
+            port,
+            false,
+            short,
+        )
+        .await
+        .expect("already running path");
 
         let _ = PROCESS_MANAGER.stop::<tauri::Wry>(None).await;
     }
@@ -1367,8 +1629,8 @@ exit 0
     #[tokio::test]
     async fn start_kernel_process_and_verify_exiting_kernel_fails() {
         use crate::app::constants::paths;
-        use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::app::core::kernel_service::readiness::StabilityCheckConfig;
+        use crate::app::core::kernel_service::PROCESS_MANAGER;
         use crate::test_support::TempWorkspace;
         use std::fs;
 
@@ -1403,9 +1665,15 @@ exit 0
             max_retry_interval_ms: 40,
             api_timeout_ms: 50,
         };
-        let err = start_kernel_process_and_verify_with_config::<tauri::Wry>(&**PROCESS_MANAGER, &cfg, 9, false, short)
-            .await
-            .expect_err("exiting kernel should fail");
+        let err = start_kernel_process_and_verify_with_config::<tauri::Wry>(
+            &**PROCESS_MANAGER,
+            &cfg,
+            9,
+            false,
+            short,
+        )
+        .await
+        .expect_err("exiting kernel should fail");
         assert!(!err.is_empty());
         assert!(!PROCESS_MANAGER.is_running().await);
         let _ = PROCESS_MANAGER.stop::<tauri::Wry>(None).await;
@@ -1587,7 +1855,8 @@ exit 0
         )
         .await
         .unwrap();
-        let _ = crate::app::core::proxy_service::apply_proxy_runtime_state(&h, &resolved.proxy).await;
+        let _ =
+            crate::app::core::proxy_service::apply_proxy_runtime_state(&h, &resolved.proxy).await;
 
         let stop = stop_kernel_command_impl(h.clone()).await.unwrap();
         assert!(stop.get("success").is_some());
@@ -1959,7 +2228,9 @@ exit 0
     #[tokio::test]
     async fn start_kernel_with_state_with_process_stability_fails() {
         use crate::app::core::kernel_service::status::set_platform_kernel_detection_enabled_for_tests;
-        use crate::app::core::kernel_service::{reset_process_controller_for_test, set_process_controller_for_test};
+        use crate::app::core::kernel_service::{
+            reset_process_controller_for_test, set_process_controller_for_test,
+        };
         use crate::app::core::proxy_service::RecordingSystemProxy;
         use crate::app::singbox::config_generator::generate_base_config;
         use crate::app::storage::state_model::AppConfig;
@@ -2219,5 +2490,3 @@ exit 0
         assert!(v.get("success").is_some());
     }
 }
-
-

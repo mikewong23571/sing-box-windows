@@ -50,8 +50,12 @@ pub(crate) async fn wait_for_storage_with_timeout<R: Runtime>(
 
 async fn wait_for_storage<R: Runtime>(app: &AppHandle<R>) -> Option<Arc<EnhancedStorageService>> {
     // 生产：无限等待
-    wait_for_storage_with_timeout(app, Duration::from_secs(1), Duration::from_secs(u64::MAX / 4))
-        .await
+    wait_for_storage_with_timeout(
+        app,
+        Duration::from_secs(1),
+        Duration::from_secs(u64::MAX / 4),
+    )
+    .await
 }
 
 async fn start_update_loop<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
@@ -158,12 +162,7 @@ mod tests {
         // 有更新
         handle_update_result(&h, &None, sample_update(true, "2.0.0")).await;
         // 跳过版本
-        handle_update_result(
-            &h,
-            &Some("2.0.0".into()),
-            sample_update(true, "2.0.0"),
-        )
-        .await;
+        handle_update_result(&h, &Some("2.0.0".into()), sample_update(true, "2.0.0")).await;
     }
 
     #[tokio::test]

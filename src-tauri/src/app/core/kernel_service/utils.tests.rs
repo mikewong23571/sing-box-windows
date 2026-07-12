@@ -38,6 +38,10 @@ fn test_kernel_status_payload_to_json() {
     assert_eq!(json["api_ready"], false);
     assert_eq!(json["websocket_ready"], true);
     assert_eq!(json["readiness"]["process_alive"], true);
+    assert!(json["desired_state"].is_string());
+    assert!(json["observed_state"].is_string());
+    assert!(json["kernel_state"].is_string());
+    assert!(json["state_version"].is_u64());
 }
 
 #[test]
@@ -82,5 +86,7 @@ fn vec_sink_records_kernel_events() {
     emit_kernel_starting_with_sink(&sink, "manual", 9090, 7890);
     let events = sink.events.lock().unwrap();
     assert!(events.iter().any(|(name, _)| name == "kernel-starting"));
-    assert!(events.iter().any(|(name, _)| name == "kernel-status-changed"));
+    assert!(events
+        .iter()
+        .any(|(name, _)| name == "kernel-status-changed"));
 }

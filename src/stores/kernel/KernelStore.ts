@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { APP_EVENTS } from '@/constants/events'
 import { kernelService, type KernelStatus } from '@/services/kernel-service'
-import { useAppStore, type ProxyMode } from '../app/AppStore'
+import type { ProxyMode } from '../app/AppStore'
 import { eventService } from '@/services/event-service'
 import type {
   KernelFailurePayload,
@@ -20,7 +20,6 @@ const DEFAULT_STATUS: KernelStatus = {
 }
 
 export const useKernelStore = defineStore('kernel', () => {
-  const appStore = useAppStore()
   const status = ref<KernelStatus>({ ...DEFAULT_STATUS })
   const startupDiagnosis = ref<StartupDiagnosis | null>(null)
   const readiness = ref<KernelReadinessSnapshot>({
@@ -67,7 +66,6 @@ export const useKernelStore = defineStore('kernel', () => {
     if (next.startup_diagnosis !== undefined) {
       startupDiagnosis.value = next.startup_diagnosis || null
     }
-    appStore.setRunningState(next.process_running)
     if (next.version) {
       isKernelInstalled.value = true
     }
@@ -303,15 +301,24 @@ export const useKernelStore = defineStore('kernel', () => {
     return compareVersion(latestAvailableVersion.value, status.value.version) > 0
   })
 
-  const isRunning = computed(() => status.value.process_running)
+  const isRunning = computed(
+    () =>
+      status.value.observed_state === 'running' ||
+      status.value.observed_state === 'degraded' ||
+      status.value.process_running,
+  )
   const isReady = computed(
     () => status.value.process_running && status.value.api_ready && status.value.websocket_ready,
   )
   const startupDiagnosisSummary = computed(
     () => startupDiagnosis.value?.message || startupDiagnosis.value?.detail || '',
   )
-  const isStarting = computed(() => status.value.kernel_state === 'starting')
-  const isStopping = computed(() => status.value.kernel_state === 'stopping')
+  const isStarting = computed(
+    () => status.value.observed_state === 'starting' || status.value.kernel_state === 'starting',
+  )
+  const isStopping = computed(
+    () => status.value.observed_state === 'stopping' || status.value.kernel_state === 'stopping',
+  )
   const uptime = computed(() => {
     const ms = status.value.uptime_ms || 0
     const seconds = Math.floor(ms / 1000)

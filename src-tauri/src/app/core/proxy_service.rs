@@ -171,7 +171,10 @@ pub(crate) fn build_tun_proxy_runtime_state(
 }
 
 /// 将 runtime state 的 inbounds 写入已有 sing-box 配置文件（纯 FS，无系统代理副作用）。
-pub fn write_inbounds_for_state(config_path: &Path, state: &ProxyRuntimeState) -> Result<(), String> {
+pub fn write_inbounds_for_state(
+    config_path: &Path,
+    state: &ProxyRuntimeState,
+) -> Result<(), String> {
     let config_path_str = config_path
         .to_str()
         .ok_or_else(|| "配置文件路径包含无效字符".to_string())?;
@@ -270,7 +273,10 @@ pub async fn set_system_proxy<R: Runtime>(
 
 // 设置手动代理模式（不自动设置系统代理）
 #[tauri::command]
-pub async fn set_manual_proxy<R: Runtime>(app_handle: AppHandle<R>, port: u16) -> Result<(), String> {
+pub async fn set_manual_proxy<R: Runtime>(
+    app_handle: AppHandle<R>,
+    port: u16,
+) -> Result<(), String> {
     let allow_lan_access = load_allow_lan_access(&app_handle).await;
     let runtime_state = build_manual_proxy_runtime_state(port, allow_lan_access);
     apply_proxy_runtime_state(&app_handle, &runtime_state).await
@@ -290,7 +296,10 @@ pub async fn set_tun_proxy<R: Runtime>(
 }
 
 /// 纯逻辑：在 sing-box 配置 JSON 上写入 DNS strategy（无 FS / AppHandle）。
-pub(crate) fn apply_dns_strategy_to_config(config: &mut Value, prefer_ipv6: bool) -> Result<(), String> {
+pub(crate) fn apply_dns_strategy_to_config(
+    config: &mut Value,
+    prefer_ipv6: bool,
+) -> Result<(), String> {
     let strategy_value = if prefer_ipv6 {
         "prefer_ipv6"
     } else {
@@ -344,7 +353,10 @@ pub(crate) fn apply_dns_strategy_to_config(config: &mut Value, prefer_ipv6: bool
 }
 
 /// 纯 FS：对指定配置文件应用 DNS strategy。
-pub(crate) fn update_dns_strategy_on_path(config_path: &Path, prefer_ipv6: bool) -> Result<(), String> {
+pub(crate) fn update_dns_strategy_on_path(
+    config_path: &Path,
+    prefer_ipv6: bool,
+) -> Result<(), String> {
     let content =
         fs::read_to_string(config_path).map_err(|e| format!("读取配置文件失败: {}", e))?;
     let mut config: Value =
@@ -877,7 +889,9 @@ pub async fn test_node_delay<R: Runtime>(
 
 use crate::app::singbox::common::normalize_default_outbound;
 use crate::app::singbox::config_generator::{inject_custom_rules, strip_custom_rules};
-use crate::app::storage::custom_rule::{CustomRule, CustomRuleAction, CustomRuleMatchType, STORAGE_KEY};
+use crate::app::storage::custom_rule::{
+    CustomRule, CustomRuleAction, CustomRuleMatchType, STORAGE_KEY,
+};
 use crate::app::storage::enhanced_storage_service::get_enhanced_storage;
 use chrono::Utc;
 
@@ -1053,11 +1067,10 @@ async fn inject_into_active_config_inner<R: Runtime>(
     let storage = get_enhanced_storage(app_handle)
         .await
         .map_err(|e| format!("初始化存储失败: {}", e))?;
-    let app_config = crate::app::storage::enhanced_storage_service::db_get_app_config(
-        app_handle.clone(),
-    )
-    .await
-    .map_err(|e| format!("读取应用配置失败: {}", e))?;
+    let app_config =
+        crate::app::storage::enhanced_storage_service::db_get_app_config(app_handle.clone())
+            .await
+            .map_err(|e| format!("读取应用配置失败: {}", e))?;
 
     // 用户原始订阅配置：不注入，避免破坏其结构。
     if is_config_path_use_original(&storage, app_config.active_config_path.as_deref()).await {
@@ -1083,11 +1096,10 @@ pub async fn inject_custom_rules_into_config_file<R: tauri::Runtime>(
     let storage = get_enhanced_storage(app_handle)
         .await
         .map_err(|e| format!("初始化存储失败: {}", e))?;
-    let app_config = crate::app::storage::enhanced_storage_service::db_get_app_config(
-        app_handle.clone(),
-    )
-    .await
-    .map_err(|e| format!("读取应用配置失败: {}", e))?;
+    let app_config =
+        crate::app::storage::enhanced_storage_service::db_get_app_config(app_handle.clone())
+            .await
+            .map_err(|e| format!("读取应用配置失败: {}", e))?;
     inject_custom_rules_into_config_file_with_storage(storage.as_ref(), &app_config, config_path)
         .await
 }
@@ -1108,8 +1120,8 @@ pub async fn inject_custom_rules_into_config_file_with_storage(
         .map_err(|e| format!("读取自定义规则失败: {}", e))?
         .unwrap_or_default();
 
-    let content = std::fs::read_to_string(config_path)
-        .map_err(|e| format!("读取配置文件失败: {}", e))?;
+    let content =
+        std::fs::read_to_string(config_path).map_err(|e| format!("读取配置文件失败: {}", e))?;
     let mut config: Value =
         serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {}", e))?;
 
@@ -1126,10 +1138,7 @@ pub async fn inject_custom_rules_into_config_file_with_storage(
     let updated =
         serde_json::to_string_pretty(&config).map_err(|e| format!("序列化配置失败: {}", e))?;
     std::fs::write(config_path, updated).map_err(|e| format!("写入配置失败: {}", e))?;
-    info!(
-        "已把 {} 条自定义规则注入配置: {:?}",
-        injected, config_path
-    );
+    info!("已把 {} 条自定义规则注入配置: {:?}", injected, config_path);
     Ok(())
 }
 

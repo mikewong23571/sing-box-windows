@@ -152,8 +152,11 @@ fn normalize_and_policy_relative_paths() {
         enforce_snapshot_relative_policy("bar.json", SnapshotPathKind::SubscriptionConfig),
         "configs/bar.json"
     );
-    assert!(enforce_snapshot_relative_policy("configs/ok.json", SnapshotPathKind::SubscriptionConfig)
-        .starts_with("configs/"));
+    assert!(enforce_snapshot_relative_policy(
+        "configs/ok.json",
+        SnapshotPathKind::SubscriptionConfig
+    )
+    .starts_with("configs/"));
 }
 
 #[test]
@@ -236,7 +239,10 @@ fn rewrite_paths_with_relative_and_backup() {
 #[test]
 fn default_paths_under_config_dir() {
     assert!(default_active_config_path().ends_with("config.json"));
-    assert!(default_configs_dir().ends_with("configs") || default_configs_dir().to_string_lossy().contains("configs"));
+    assert!(
+        default_configs_dir().ends_with("configs")
+            || default_configs_dir().to_string_lossy().contains("configs")
+    );
 }
 
 #[tokio::test]
@@ -257,7 +263,8 @@ async fn apply_snapshot_to_storage_roundtrip() {
         active_config_path: Some("config.json".into()),
         ..AppConfig::default()
     };
-    let content = r#"{"log":{"level":"info"},"inbounds":[],"outbounds":[{"type":"direct","tag":"direct"}]}"#;
+    let content =
+        r#"{"log":{"level":"info"},"inbounds":[],"outbounds":[{"type":"direct","tag":"direct"}]}"#;
     let snap_json = serde_json::json!({
         "format_version": 2,
         "app_config": app,
@@ -269,8 +276,15 @@ async fn apply_snapshot_to_storage_roundtrip() {
         "active_config_content": content,
     });
     let snapshot = parse_snapshot(&snap_json.to_string()).unwrap();
-    let warnings = apply_snapshot_to_storage(&storage, &snapshot).await.unwrap();
-    assert!(storage.get_app_config().await.unwrap().active_config_path.is_some());
+    let warnings = apply_snapshot_to_storage(&storage, &snapshot)
+        .await
+        .unwrap();
+    assert!(storage
+        .get_app_config()
+        .await
+        .unwrap()
+        .active_config_path
+        .is_some());
     let _ = warnings;
 
     let snap2 = serde_json::json!({
@@ -283,7 +297,9 @@ async fn apply_snapshot_to_storage_roundtrip() {
         "subscriptions": []
     });
     let snapshot2 = parse_snapshot(&snap2.to_string()).unwrap();
-    let w2 = apply_snapshot_to_storage(&storage, &snapshot2).await.unwrap();
+    let w2 = apply_snapshot_to_storage(&storage, &snapshot2)
+        .await
+        .unwrap();
     assert!(w2.iter().any(|w| {
         w.contains("active_config_content")
             || w.contains("active_config_path")
@@ -372,7 +388,8 @@ fn decode_snapshot_path_absolute_and_empty_subscription() {
     assert!(stats.absolute_rewrites >= 1 || stats.policy_rewrites >= 1);
 
     let mut stats2 = PathRewriteStats::default();
-    let empty_sub = decode_snapshot_path_to_local("", SnapshotPathKind::SubscriptionBackup, &mut stats2);
+    let empty_sub =
+        decode_snapshot_path_to_local("", SnapshotPathKind::SubscriptionBackup, &mut stats2);
     assert!(empty_sub.to_string_lossy().contains("subscription") || empty_sub.is_absolute());
 }
 
@@ -428,7 +445,9 @@ fn collect_import_precheck_warnings_dry_run_and_live() {
     assert!(live.iter().any(|w| w.contains("没有订阅")));
 
     let dry = collect_import_precheck_warnings(&snap, true);
-    assert!(dry.iter().any(|w| w.contains("预检") || w.contains("active_config")));
+    assert!(dry
+        .iter()
+        .any(|w| w.contains("预检") || w.contains("active_config")));
     assert!(dry.len() >= live.len());
 }
 
@@ -439,7 +458,8 @@ fn write_and_read_snapshot_roundtrip() {
     let mut snap = BackupSnapshot::default();
     snap.created_at = 12345;
     snap.active_config_content = Some(r#"{"log":{"level":"info"}}"#.into());
-    snap.subscriptions.push(build_subscription("configs/a.json"));
+    snap.subscriptions
+        .push(build_subscription("configs/a.json"));
     let exported = write_snapshot_to_path(&snap, &path).unwrap();
     assert_eq!(exported.subscriptions_count, 1);
     assert!(path.exists());
@@ -474,7 +494,10 @@ async fn build_snapshot_from_storage_and_export_import_dry_run() {
         .save_subscriptions(&[build_subscription(&cfg_path.to_string_lossy())])
         .await
         .unwrap();
-    storage.save_active_subscription_index(Some(0)).await.unwrap();
+    storage
+        .save_active_subscription_index(Some(0))
+        .await
+        .unwrap();
 
     let snapshot = build_snapshot_from_storage(storage.as_ref()).await.unwrap();
     assert_eq!(snapshot.format_version, SNAPSHOT_FORMAT_VERSION);

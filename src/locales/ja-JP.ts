@@ -40,6 +40,8 @@ export default {
     stopped: '停止中',
     failed: '失敗',
     crashed: 'クラッシュ',
+    desiredRunning: '実行を維持',
+    desiredStopped: '停止を維持',
   },
 
   // 首页
@@ -572,6 +574,8 @@ export default {
     autoStart: {
       app: 'システム起動時に起動',
       appDesc: 'システム起動時にアプリを自動的に実行',
+      kernel: 'アプリ起動時にカーネルを起動',
+      kernelDesc: 'アプリ起動時のみ適用され、ホームから手動で起動できます',
     },
 
     // 启动设置

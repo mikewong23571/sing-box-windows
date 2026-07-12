@@ -325,10 +325,7 @@ fn is_supported_outbound_type(node_type: &str) -> bool {
 ///
 /// 统一处理 sni/skip-cert-verify/alpn 字段映射，避免在多个分支重复样板代码。
 fn build_tls_from_clash(clash_node: &Value, server: &str) -> Value {
-    let sni = clash_node
-        .get("sni")
-        .and_then(|s| s.as_str())
-        .unwrap_or("");
+    let sni = clash_node.get("sni").and_then(|s| s.as_str()).unwrap_or("");
     let insecure = clash_node
         .get("skip-cert-verify")
         .and_then(|v| v.as_bool())
@@ -360,9 +357,10 @@ fn convert_clash_node_to_singbox(clash_node: &Value) -> Option<Value> {
     let name = clash_node.get("name").and_then(|n| n.as_str())?;
     let server = clash_node.get("server").and_then(|s| s.as_str())?;
     // serde_yaml 可能把 "22892" 解析为字符串而非整数；同时兼容数值与字符串两种形式。
-    let port = clash_node
-        .get("port")
-        .and_then(|p| p.as_u64().or_else(|| p.as_str().and_then(|s| s.parse::<u64>().ok())))?;
+    let port = clash_node.get("port").and_then(|p| {
+        p.as_u64()
+            .or_else(|| p.as_str().and_then(|s| s.parse::<u64>().ok()))
+    })?;
 
     match node_type {
         "vmess" => {
@@ -502,12 +500,14 @@ fn convert_clash_node_to_singbox(clash_node: &Value) -> Option<Value> {
             });
 
             if let Some(up) = clash_node.get("up").and_then(|v| {
-                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
             }) {
                 node["up_mbps"] = json!(up);
             }
             if let Some(down) = clash_node.get("down").and_then(|v| {
-                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
             }) {
                 node["down_mbps"] = json!(down);
             }
@@ -976,7 +976,10 @@ fn parse_tuic_uri(uri: &str) -> Option<Value> {
         }
     };
 
-    let password = url.password().map(str::trim).filter(|value| !value.is_empty());
+    let password = url
+        .password()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let sni = query
         .get("sni")
         .or_else(|| query.get("servername"))

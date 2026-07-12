@@ -121,7 +121,9 @@ pub(crate) async fn verify_kernel_startup_stability_with_process_with_config<R: 
 
     for attempt in 1..=cfg.max_checks {
         let alive = process.is_running().await
-            || is_kernel_running_with_process(process).await.unwrap_or(false);
+            || is_kernel_running_with_process(process)
+                .await
+                .unwrap_or(false);
         if !alive {
             return Err("kernel process exited immediately after startup".to_string());
         }
@@ -174,4 +176,3 @@ pub(crate) async fn verify_kernel_startup_stability_with_process_with_config<R: 
 #[cfg(test)]
 #[path = "readiness.tests.rs"]
 mod tests;
-

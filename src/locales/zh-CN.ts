@@ -38,6 +38,8 @@ export default {
     crashed: '已崩溃',
     connecting: '连接中',
     disconnected: '已断开',
+    desiredRunning: '期望运行',
+    desiredStopped: '期望停止',
   },
   home: {
     kernelHealthy: '内核健康',
@@ -575,6 +577,8 @@ export default {
     autoStart: {
       app: '开机自启',
       appDesc: '系统启动时自动运行应用程序',
+      kernel: '应用启动时启动内核',
+      kernelDesc: '仅在应用启动时生效；关闭后仍可在首页手动启动内核',
       error: '设置开机自启失败',
     },
     startup: {

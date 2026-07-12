@@ -337,9 +337,11 @@ fn is_platform_compatible_checks_extension_and_arch() {
     let platform = get_platform_identifier();
     match platform {
         "linux" => {
-            assert!(is_platform_compatible("sing-box-linux-x86_64.deb")
-                || is_platform_compatible("sing-box-linux-amd64.AppImage")
-                || !is_platform_compatible("sing-box-windows.exe"));
+            assert!(
+                is_platform_compatible("sing-box-linux-x86_64.deb")
+                    || is_platform_compatible("sing-box-linux-amd64.AppImage")
+                    || !is_platform_compatible("sing-box-windows.exe")
+            );
             assert!(!is_platform_compatible("sing-box-windows.msi"));
         }
         "windows" => {
@@ -355,13 +357,17 @@ fn is_platform_compatible_checks_extension_and_arch() {
 #[test]
 fn get_platform_priority_windows_and_macos() {
     assert!(
-        get_platform_priority_for("app-x64.exe", "windows", "x86_64", LinuxPackagePreference::Deb)
-            > get_platform_priority_for(
-                "app-x64.msi",
-                "windows",
-                "x86_64",
-                LinuxPackagePreference::Deb
-            )
+        get_platform_priority_for(
+            "app-x64.exe",
+            "windows",
+            "x86_64",
+            LinuxPackagePreference::Deb
+        ) > get_platform_priority_for(
+            "app-x64.msi",
+            "windows",
+            "x86_64",
+            LinuxPackagePreference::Deb
+        )
     );
     assert!(
         get_platform_priority_for(
@@ -446,22 +452,14 @@ fn pick_best_download_asset_prefers_high_priority() {
             "size": 150
         }),
     ];
-    let (url, size, prio) = pick_best_download_asset(
-        &assets,
-        "linux",
-        "x86_64",
-        LinuxPackagePreference::Deb,
-    );
+    let (url, size, prio) =
+        pick_best_download_asset(&assets, "linux", "x86_64", LinuxPackagePreference::Deb);
     assert!(url.contains(".deb"));
     assert_eq!(size, Some(100));
     assert!(prio >= 20);
 
-    let (url2, _, _) = pick_best_download_asset(
-        &assets,
-        "linux",
-        "x86_64",
-        LinuxPackagePreference::Rpm,
-    );
+    let (url2, _, _) =
+        pick_best_download_asset(&assets, "linux", "x86_64", LinuxPackagePreference::Rpm);
     assert!(url2.contains(".rpm"));
 }
 
@@ -484,22 +482,14 @@ fn pick_best_download_asset_windows_and_macos() {
             "size": 3
         }),
     ];
-    let (url, size, prio) = pick_best_download_asset(
-        &assets,
-        "windows",
-        "x86_64",
-        LinuxPackagePreference::Deb,
-    );
+    let (url, size, prio) =
+        pick_best_download_asset(&assets, "windows", "x86_64", LinuxPackagePreference::Deb);
     assert!(url.ends_with(".exe"));
     assert_eq!(size, Some(2));
     assert!(prio >= 25);
 
-    let (url_m, _, _) = pick_best_download_asset(
-        &assets,
-        "macos",
-        "aarch64",
-        LinuxPackagePreference::Deb,
-    );
+    let (url_m, _, _) =
+        pick_best_download_asset(&assets, "macos", "aarch64", LinuxPackagePreference::Deb);
     assert!(url_m.ends_with(".dmg"));
 }
 
@@ -629,8 +619,10 @@ fn plan_install_action_all_platforms() {
 
 #[test]
 fn default_check_update_api_url_stable_vs_list() {
-    assert!(default_check_update_api_url(false).contains("releases/latest")
-        || default_check_update_api_url(false).contains("github.com"));
+    assert!(
+        default_check_update_api_url(false).contains("releases/latest")
+            || default_check_update_api_url(false).contains("github.com")
+    );
     assert!(default_check_update_api_url(true).ends_with("/releases"));
     assert_ne!(
         default_check_update_api_url(true),
@@ -653,11 +645,7 @@ fn select_release_json_for_channel_empty_and_match() {
 fn update_path_and_progress_and_rpm_precheck() {
     assert!(in_app_update_unsupported_message().contains("应用内更新"));
     assert_eq!(downloaded_update_missing_message(), "下载的文件不存在");
-    let p = resolve_update_download_path(
-        Path::new("/tmp/wd"),
-        "https://x/app.deb",
-        "linux",
-    );
+    let p = resolve_update_download_path(Path::new("/tmp/wd"), "https://x/app.deb", "linux");
     assert!(p.ends_with("update.deb"));
     let payload = build_update_progress_payload("downloading", 42, "hi");
     assert_eq!(payload["status"], "downloading");
@@ -859,12 +847,8 @@ fn get_platform_priority_arch_and_special_bonus() {
         LinuxPackagePreference::Deb,
     );
     assert!(arm >= 20);
-    let no_arch = get_platform_priority_for(
-        "app.exe",
-        "windows",
-        "x86_64",
-        LinuxPackagePreference::Deb,
-    );
+    let no_arch =
+        get_platform_priority_for("app.exe", "windows", "x86_64", LinuxPackagePreference::Deb);
     assert!(no_arch >= 20);
     // 未知平台
     assert_eq!(
@@ -904,16 +888,13 @@ fn pick_best_download_asset_skips_incompatible() {
             "size": 9
         }),
     ];
-    let (url, size, prio) = pick_best_download_asset(
-        &assets,
-        "windows",
-        "x86_64",
-        LinuxPackagePreference::Deb,
-    );
+    let (url, size, prio) =
+        pick_best_download_asset(&assets, "windows", "x86_64", LinuxPackagePreference::Deb);
     assert!(url.ends_with(".msi"));
     assert_eq!(size, Some(9));
     assert!(prio > 0);
-    let (empty, _, p0) = pick_best_download_asset(&[], "windows", "x86_64", LinuxPackagePreference::Deb);
+    let (empty, _, p0) =
+        pick_best_download_asset(&[], "windows", "x86_64", LinuxPackagePreference::Deb);
     assert!(empty.is_empty());
     assert_eq!(p0, 0);
 }

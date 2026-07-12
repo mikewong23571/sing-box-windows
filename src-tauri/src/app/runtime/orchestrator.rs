@@ -1,6 +1,8 @@
-use crate::app::core::kernel_auto_manage::run_auto_manage_with_saved_config;
 use crate::app::core::kernel_service::utils::{AppHandleOwnedSink, KernelEventSink};
-use crate::app::core::kernel_service::{kernel_process_manager_singleton, KernelProcessControl};
+use crate::app::core::kernel_service::{
+    kernel_process_manager_singleton, orchestrated_apply_change_with_deps, KernelChangeImpact,
+    KernelProcessControl,
+};
 use crate::app::core::proxy_service::{
     apply_proxy_runtime_state_with, update_dns_strategy, ProxyRuntimeState, SystemProxyPort,
 };
@@ -74,44 +76,65 @@ pub async fn apply_runtime_change_with_deps<R: Runtime>(
         config_patched = true;
     }
 
+    let runtime_active = deps.process.is_running().await;
     let mut proxy_applied = false;
-    if plan.apply_proxy_runtime {
+    if plan.apply_proxy_runtime && runtime_active {
         let runtime_state = runtime_state_from_config(&effective_config);
-        if let Err(e) =
-            apply_proxy_runtime_state_with(app, &runtime_state, deps.system_proxy.as_ref()).await
-        {
-            warn!("应用运行态代理配置失败({}): {}", options.reason, e);
-        } else {
-            proxy_applied = true;
-        }
+        apply_proxy_runtime_state_with(app, &runtime_state, deps.system_proxy.as_ref())
+            .await
+            .map_err(|e| format!("应用运行态代理配置失败({}): {}", options.reason, e))?;
+        proxy_applied = true;
         if let Err(e) = update_dns_strategy(app, effective_config.prefer_ipv6).await {
             warn!("更新 DNS 策略失败({}): {}", options.reason, e);
         }
     }
 
-    let mut auto_manage_state = None;
-    let mut message = "运行态变更已应用".to_string();
-    if plan.auto_manage_kernel {
-        match run_auto_manage_with_saved_config(app, options.force_restart, &options.reason).await {
-            Ok(Some(result)) => {
-                message = result.message.clone();
-                auto_manage_state = Some(result.state);
-            }
-            Ok(None) => {
-                message = "运行态自动管理已跳过".to_string();
-            }
-            Err(err) => {
-                return Err(err);
-            }
+    let (kernel_action, message) = if plan.kernel_impact == KernelChangeImpact::RestartIfRunning {
+        let result = orchestrated_apply_change_with_deps(
+            app.clone(),
+            plan.kernel_impact,
+            options.reason.clone(),
+            deps.process.clone(),
+            deps.system_proxy.clone(),
+        )
+        .await?;
+        if !result
+            .get("success")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+        {
+            return Err(result
+                .get("message")
+                .and_then(|value| value.as_str())
+                .unwrap_or("内核运行态变更失败")
+                .to_string());
         }
-    }
+        let message = result
+            .get("message")
+            .and_then(|value| value.as_str())
+            .unwrap_or("运行态变更已应用")
+            .to_string();
+        let state = match plan.kernel_impact {
+            KernelChangeImpact::HotApply => "hot_apply",
+            KernelChangeImpact::RestartIfRunning => "restart_if_running",
+            KernelChangeImpact::PersistOnly => "persist_only",
+        };
+        (Some(state.to_string()), message)
+    } else if plan.kernel_impact == KernelChangeImpact::HotApply && runtime_active {
+        (
+            Some("hot_apply".to_string()),
+            "运行态变更已热应用".to_string(),
+        )
+    } else {
+        (None, "配置已保存，内核状态保持不变".to_string())
+    };
 
     Ok(RuntimeApplyResult {
         change: change.as_str().to_string(),
         reason: options.reason,
         config_patched,
         proxy_applied,
-        auto_manage_state,
+        kernel_action,
         message,
     })
 }
@@ -153,7 +176,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apply_runtime_change_proxy_and_patch_without_auto_manage() {
+    async fn apply_runtime_change_proxy_and_patch_preserves_stopped_kernel() {
         let env = MockAppEnv::new();
         let cfg_path = env.workspace.path().join("sing-box/configs/active.json");
         fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
@@ -179,12 +202,17 @@ mod tests {
             .await
             .expect("apply proxy change");
         assert!(!result.config_patched);
-        assert!(result.auto_manage_state.is_none());
+        assert!(result.kernel_action.is_none());
         assert_eq!(result.change, RuntimeChange::ProxySettingsChanged.as_str());
     }
 
     #[tokio::test]
-    async fn apply_runtime_change_subscription_patches_and_auto_manage_missing_kernel() {
+    async fn apply_runtime_change_subscription_requests_restart_if_running() {
+        use crate::app::core::kernel_service::status::set_platform_kernel_detection_enabled_for_tests;
+        use crate::app::core::proxy_service::RecordingSystemProxy;
+        use crate::test_support::FakeProcessController;
+
+        set_platform_kernel_detection_enabled_for_tests(false);
         let env = MockAppEnv::new();
         let cfg_path = env.workspace.path().join("sing-box/configs/sub.json");
         fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
@@ -205,16 +233,23 @@ mod tests {
         let h = env.handle();
         let options = RuntimeApplyOptions::new("test-sub-apply")
             .patch_active_config(true)
-            .force_restart(true)
+            .restart_if_running(true)
             .use_original_config_hint(Some(true));
-        // 无内核时 auto_manage 返回 missing_kernel，仍应 Ok
-        let result = apply_runtime_change(&h, RuntimeChange::SubscriptionApplied, options)
-            .await
-            .expect("apply subscription change");
+        // 使用明确处于停止态的依赖，避免与全局进程管理器的其他测试互相影响。
+        let process: Arc<dyn KernelProcessControl<tauri::test::MockRuntime>> =
+            Arc::new(FakeProcessController::default());
+        let deps =
+            RuntimeDeps::for_test(storage, process, Arc::new(RecordingSystemProxy::default()));
+        // 无运行内核时保持停止，配置 patch 仍应成功。
+        let result =
+            apply_runtime_change_with_deps(&h, &deps, RuntimeChange::SubscriptionApplied, options)
+                .await
+                .expect("apply subscription change");
         assert!(result.config_patched);
-        assert!(result.auto_manage_state.is_some());
+        assert!(result.kernel_action.is_some());
         // 活动配置应被 PortsOnly 补丁（文件仍存在）
         assert!(cfg_path.exists());
+        set_platform_kernel_detection_enabled_for_tests(true);
     }
 
     #[tokio::test]
@@ -235,14 +270,10 @@ mod tests {
 
         let options = RuntimeApplyOptions::new("test-app-config")
             .patch_active_config(true)
-            .force_restart(false);
-        let result = apply_runtime_change(
-            &env.handle(),
-            RuntimeChange::AppConfigUpdated,
-            options,
-        )
-        .await
-        .expect("app config update");
+            .restart_if_running(false);
+        let result = apply_runtime_change(&env.handle(), RuntimeChange::AppConfigUpdated, options)
+            .await
+            .expect("app config update");
         assert!(result.config_patched);
         assert_eq!(result.change, "app_config_updated");
     }
@@ -270,8 +301,9 @@ mod tests {
         storage.save_app_config(&cfg).await.unwrap();
 
         let proxy = Arc::new(RecordingSystemProxy::default());
-        let process: Arc<dyn KernelProcessControl<tauri::test::MockRuntime>> =
-            Arc::new(FakeProcessController::default());
+        let fake_process = Arc::new(FakeProcessController::default());
+        fake_process.set_running(true);
+        let process: Arc<dyn KernelProcessControl<tauri::test::MockRuntime>> = fake_process;
         let deps = RuntimeDeps::for_test(storage.clone(), process, proxy.clone());
 
         let options = RuntimeApplyOptions::new("test-deps").patch_active_config(false);
