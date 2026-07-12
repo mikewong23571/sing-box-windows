@@ -214,7 +214,9 @@ async fn fetch_latest_version_from_local_mock_urls() {
             let _ = s.read(&mut buf).await;
             if i == 0 {
                 let _ = s
-                    .write_all(b"HTTP/1.1 500 ERR\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .write_all(
+                        b"HTTP/1.1 500 ERR\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
                     .await;
             } else {
                 let body = r#"{"tag_name":"v1.14.0"}"#;
@@ -244,7 +246,9 @@ async fn fetch_latest_version_all_urls_fail() {
         .await
         .unwrap_err();
     assert!(!err.to_string().is_empty());
-    let err2 = fetch_latest_kernel_version_from_urls(&[]).await.unwrap_err();
+    let err2 = fetch_latest_kernel_version_from_urls(&[])
+        .await
+        .unwrap_err();
     assert!(!err2.to_string().is_empty());
 }
 
@@ -343,12 +347,20 @@ async fn check_kernel_version_impl_from_db_cache() {
     use std::fs;
 
     let env = MockAppEnv::new();
-    write_fake_kernel(&crate::app::constants::paths::get_kernel_path(), true, "9.9.9");
+    write_fake_kernel(
+        &crate::app::constants::paths::get_kernel_path(),
+        true,
+        "9.9.9",
+    );
     // 确保父目录存在
     if let Some(parent) = crate::app::constants::paths::get_kernel_path().parent() {
         fs::create_dir_all(parent).ok();
     }
-    write_fake_kernel(&crate::app::constants::paths::get_kernel_path(), true, "9.9.9");
+    write_fake_kernel(
+        &crate::app::constants::paths::get_kernel_path(),
+        true,
+        "9.9.9",
+    );
 
     let db = env.workspace.path().join("ver.db");
     let storage = env.install_storage_from_path(db.to_str().unwrap()).await;
@@ -411,10 +423,7 @@ async fn check_config_validity_impl_with_fake_kernel() {
     check_config_validity_impl(env.handle(), String::new())
         .await
         .expect("validity ok");
-    check_config_validity_impl(
-        env.handle(),
-        cfg_path.to_string_lossy().to_string(),
-    )
-    .await
-    .expect("validity explicit path");
+    check_config_validity_impl(env.handle(), cfg_path.to_string_lossy().to_string())
+        .await
+        .expect("validity explicit path");
 }

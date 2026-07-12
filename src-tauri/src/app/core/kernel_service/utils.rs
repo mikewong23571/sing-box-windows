@@ -3,14 +3,18 @@
 //! 提供内核服务各模块共用的工具函数，避免代码重复。
 
 use crate::app::constants::paths;
-use crate::app::core::kernel_service::orchestrator::current_state_version;
+use crate::app::core::kernel_service::orchestrator::{
+    current_operation_meta, current_state_version,
+};
 use crate::app::core::kernel_service::state::{
-    KernelReadinessSnapshot, StartupDiagnosis, StartupDiagnosisKind, StartupStage, KERNEL_STATE,
+    KernelLifecycleSnapshot, KernelOperationMeta, KernelReadinessSnapshot, StartupDiagnosis,
+    StartupDiagnosisKind, StartupStage, KERNEL_STATE,
 };
 use crate::app::storage::enhanced_storage_service::db_get_app_config;
 use serde::Serialize;
 use serde_json::json;
 use std::path::PathBuf;
+#[cfg(any(test, feature = "test-util"))]
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
@@ -48,7 +52,10 @@ pub struct VecSink {
 #[cfg(any(test, feature = "test-util"))]
 impl KernelEventSink for VecSink {
     fn emit(&self, event: &str, payload: serde_json::Value) {
-        self.events.lock().unwrap().push((event.to_string(), payload));
+        self.events
+            .lock()
+            .unwrap()
+            .push((event.to_string(), payload));
     }
 }
 
@@ -161,19 +168,47 @@ impl KernelStatusPayload {
 
     /// 转换为 JSON Value
     pub fn to_json(&self) -> serde_json::Value {
-        json!({
-            "process_running": self.process_running,
-            "api_ready": self.api_ready,
-            "websocket_ready": self.websocket_ready,
-            "readiness": self.readiness.clone(),
-            "startup_diagnosis": self.startup_diagnosis.clone(),
-            "error": self
-                .startup_diagnosis
-                .as_ref()
-                .map(|diagnosis| diagnosis.message.clone()),
-            "kernel_state": KERNEL_STATE.get_state().as_str(),
-            "state_version": current_state_version()
+        let desired_state = KERNEL_STATE.get_desired_state();
+        let observed_state = KERNEL_STATE.get_observed_state();
+        let operation = current_operation_meta();
+        let operation_meta =
+            operation.map(|(op_id, operation, state_version)| KernelOperationMeta {
+                op_id,
+                operation: operation.to_string(),
+                state_version,
+            });
+        let mut value = serde_json::to_value(KernelLifecycleSnapshot {
+            desired_state,
+            observed_state,
+            process_running: self.process_running,
+            api_ready: self.api_ready,
+            websocket_ready: self.websocket_ready,
+            readiness: self.readiness.clone(),
+            startup_diagnosis: self.startup_diagnosis.clone(),
+            kernel_state: KERNEL_STATE.get_state(),
+            state_version: current_state_version(),
+            operation_meta: operation_meta.clone(),
         })
+        .unwrap_or(serde_json::Value::Null);
+
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "error".to_string(),
+                json!(self
+                    .startup_diagnosis
+                    .as_ref()
+                    .map(|diagnosis| diagnosis.message.clone())),
+            );
+            obj.insert(
+                "op_id".to_string(),
+                json!(operation_meta.as_ref().map(|meta| meta.op_id.clone())),
+            );
+            obj.insert(
+                "operation".to_string(),
+                json!(operation_meta.as_ref().map(|meta| meta.operation.clone())),
+            );
+        }
+        value
     }
 }
 
@@ -322,8 +357,6 @@ fn now_millis() -> u64 {
 fn infer_stage_from_source(source: &str) -> StartupStage {
     if source.contains("check_config") || source.contains("preflight") {
         StartupStage::Preflight
-    } else if source.contains("auto_manage") {
-        StartupStage::AutoManage
     } else if source.contains("guard") {
         StartupStage::Guard
     } else if source.contains("startup_stability")
@@ -509,14 +542,7 @@ pub fn emit_kernel_error_with_context<R: tauri::Runtime>(
 }
 
 pub fn emit_kernel_error_with_sink(sink: &dyn KernelEventSink, error: &str) {
-    emit_kernel_error_with_context_with_sink(
-        sink,
-        "KERNEL_RUNTIME_ERROR",
-        error,
-        None,
-        None,
-        true,
-    );
+    emit_kernel_error_with_context_with_sink(sink, "KERNEL_RUNTIME_ERROR", error, None, None, true);
 }
 
 pub fn emit_kernel_error<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, error: &str) {

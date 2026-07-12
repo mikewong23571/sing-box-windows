@@ -366,9 +366,9 @@ fn inject_custom_rules_marks_each_rule_and_preserves_preamble() {
         .collect();
     assert_eq!(marked.len(), 2, "每条自定义规则都应有 marker");
     assert!(
-        marked.iter().all(|r| {
-            r.get("domain_suffix").is_some() || r.get("ip_cidr").is_some()
-        }),
+        marked
+            .iter()
+            .all(|r| { r.get("domain_suffix").is_some() || r.get("ip_cidr").is_some() }),
         "marker 只应出现在自定义规则上"
     );
 }

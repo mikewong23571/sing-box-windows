@@ -38,6 +38,8 @@ export default {
     crashed: 'Crashed',
     connecting: 'Connecting',
     disconnected: 'Disconnected',
+    desiredRunning: 'Expected to run',
+    desiredStopped: 'Expected to stop',
   },
   home: {
     kernelHealthy: 'Kernel healthy',
@@ -291,6 +293,7 @@ export default {
     directConnect: 'Direct Connection',
     blockAction: 'Block',
     noRulesData: 'No rule data available',
+    kernelNotRunning: 'Start the kernel to view runtime rules',
     adjustSearchOrFilters: 'Please try adjusting search conditions or filter conditions',
     clickRefreshToGetRules: 'Click refresh button to get rule data',
     getRules: 'Get Rules',
@@ -581,6 +584,8 @@ export default {
     autoStart: {
       app: 'Startup with System',
       appDesc: 'Automatically run application on system startup',
+      kernel: 'Start Kernel with App',
+      kernelDesc: 'Only applies when the app starts; the kernel can still be started manually',
       error: 'Failed to set auto-start',
     },
     startup: {

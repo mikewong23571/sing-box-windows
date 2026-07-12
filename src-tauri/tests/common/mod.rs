@@ -5,11 +5,58 @@ use app_lib::app::singbox::config_generator::generate_base_config;
 use app_lib::app::storage::database::DatabaseService;
 use app_lib::app::storage::enhanced_storage_service::EnhancedStorageService;
 use app_lib::app::storage::state_model::AppConfig;
-use app_lib::test_support::TempWorkspace;
 use app_lib::utils::app_util::WORK_DIR_ENV;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// Integration-test-local isolated work directory.
+///
+/// Keep this fixture outside the application crate so normal `cargo test`
+/// does not need to expose test-only support APIs to integration tests.
+pub struct TempWorkspace {
+    _dir: tempfile::TempDir,
+    _guard: MutexGuard<'static, ()>,
+    work_dir: PathBuf,
+}
+
+impl TempWorkspace {
+    pub fn new() -> Self {
+        let guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let work_dir = dir.path().to_path_buf();
+        std::env::set_var(WORK_DIR_ENV, &work_dir);
+        fs::create_dir_all(&work_dir).expect("create isolated workdir");
+        Self {
+            _dir: dir,
+            _guard: guard,
+            work_dir,
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.work_dir
+    }
+
+    pub fn join(&self, rel: &str) -> PathBuf {
+        self.work_dir.join(rel)
+    }
+}
+
+impl Drop for TempWorkspace {
+    fn drop(&mut self) {
+        if std::env::var(WORK_DIR_ENV)
+            .ok()
+            .is_some_and(|current| Path::new(&current) == self.work_dir)
+        {
+            std::env::remove_var(WORK_DIR_ENV);
+        }
+    }
+}
 
 #[allow(dead_code)]
 pub struct E2eEnv {
@@ -40,7 +87,10 @@ impl E2eEnv {
         let storage = EnhancedStorageService::from_path(db_path.to_str().unwrap())
             .await
             .expect("open storage");
-        storage.save_app_config(&cfg).await.expect("save app config");
+        storage
+            .save_app_config(&cfg)
+            .await
+            .expect("save app config");
 
         Self {
             workspace,

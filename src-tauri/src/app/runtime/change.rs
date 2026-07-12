@@ -1,3 +1,4 @@
+use crate::app::core::kernel_service::state::KernelChangeImpact;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +24,7 @@ impl RuntimeChange {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeApplyOptions {
-    pub force_restart: bool,
+    pub kernel_impact: KernelChangeImpact,
     pub patch_active_config: bool,
     pub use_original_config_hint: Option<bool>,
     pub reason: String,
@@ -37,8 +38,12 @@ impl RuntimeApplyOptions {
         }
     }
 
-    pub fn force_restart(mut self, value: bool) -> Self {
-        self.force_restart = value;
+    pub fn restart_if_running(mut self, value: bool) -> Self {
+        self.kernel_impact = if value {
+            KernelChangeImpact::RestartIfRunning
+        } else {
+            KernelChangeImpact::PersistOnly
+        };
         self
     }
 
@@ -56,7 +61,7 @@ impl RuntimeApplyOptions {
 impl Default for RuntimeApplyOptions {
     fn default() -> Self {
         Self {
-            force_restart: false,
+            kernel_impact: KernelChangeImpact::PersistOnly,
             patch_active_config: false,
             use_original_config_hint: None,
             reason: "runtime-change".to_string(),
@@ -70,7 +75,7 @@ pub struct RuntimeApplyResult {
     pub reason: String,
     pub config_patched: bool,
     pub proxy_applied: bool,
-    pub auto_manage_state: Option<String>,
+    pub kernel_action: Option<String>,
     pub message: String,
 }
 
@@ -78,7 +83,7 @@ pub struct RuntimeApplyResult {
 pub struct RuntimeActionPlan {
     pub patch_active_config: bool,
     pub apply_proxy_runtime: bool,
-    pub auto_manage_kernel: bool,
+    pub kernel_impact: KernelChangeImpact,
 }
 
 pub fn plan_runtime_actions(
@@ -91,47 +96,54 @@ pub fn plan_runtime_actions(
             change,
             RuntimeChange::SubscriptionApplied | RuntimeChange::ProxySettingsChanged
         ),
-        auto_manage_kernel: !matches!(change, RuntimeChange::ProxySettingsChanged),
+        kernel_impact: if matches!(change, RuntimeChange::ProxySettingsChanged) {
+            KernelChangeImpact::HotApply
+        } else {
+            options.kernel_impact
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{plan_runtime_actions, RuntimeApplyOptions, RuntimeChange};
+    use super::{plan_runtime_actions, KernelChangeImpact, RuntimeApplyOptions, RuntimeChange};
 
     #[test]
-    fn app_config_update_should_patch_and_auto_manage_when_requested() {
+    fn app_config_update_should_preserve_kernel_state_by_default() {
         let options = RuntimeApplyOptions::new("test").patch_active_config(true);
         let plan = plan_runtime_actions(RuntimeChange::AppConfigUpdated, &options);
 
         assert!(plan.patch_active_config);
         assert!(!plan.apply_proxy_runtime);
-        assert!(plan.auto_manage_kernel);
+        assert_eq!(plan.kernel_impact, KernelChangeImpact::PersistOnly);
     }
 
     #[test]
-    fn subscription_apply_should_apply_proxy_and_auto_manage() {
+    fn subscription_apply_should_preserve_kernel_state_by_default() {
         let options = RuntimeApplyOptions::new("test").patch_active_config(true);
         let plan = plan_runtime_actions(RuntimeChange::SubscriptionApplied, &options);
 
         assert!(plan.patch_active_config);
         assert!(plan.apply_proxy_runtime);
-        assert!(plan.auto_manage_kernel);
+        assert_eq!(plan.kernel_impact, KernelChangeImpact::PersistOnly);
     }
 
     #[test]
-    fn proxy_settings_change_should_not_auto_manage_kernel() {
+    fn proxy_settings_change_should_be_hot_apply() {
         let options = RuntimeApplyOptions::new("test");
         let plan = plan_runtime_actions(RuntimeChange::ProxySettingsChanged, &options);
 
         assert!(!plan.patch_active_config);
         assert!(plan.apply_proxy_runtime);
-        assert!(!plan.auto_manage_kernel);
+        assert_eq!(plan.kernel_impact, KernelChangeImpact::HotApply);
     }
 
     #[test]
     fn runtime_change_as_str_covers_all_variants() {
-        assert_eq!(RuntimeChange::AppConfigUpdated.as_str(), "app_config_updated");
+        assert_eq!(
+            RuntimeChange::AppConfigUpdated.as_str(),
+            "app_config_updated"
+        );
         assert_eq!(
             RuntimeChange::ActiveConfigChanged.as_str(),
             "active_config_changed"
@@ -150,21 +162,21 @@ mod tests {
     #[test]
     fn options_builder_and_defaults() {
         let opts = RuntimeApplyOptions::new("reason-x")
-            .force_restart(true)
+            .restart_if_running(true)
             .patch_active_config(true)
             .use_original_config_hint(Some(true));
-        assert!(opts.force_restart);
+        assert_eq!(opts.kernel_impact, KernelChangeImpact::RestartIfRunning);
         assert!(opts.patch_active_config);
         assert_eq!(opts.use_original_config_hint, Some(true));
         assert_eq!(opts.reason, "reason-x");
 
         let d = RuntimeApplyOptions::default();
-        assert!(!d.force_restart);
+        assert_eq!(d.kernel_impact, KernelChangeImpact::PersistOnly);
         assert!(!d.patch_active_config);
         assert!(d.use_original_config_hint.is_none());
 
         let plan = plan_runtime_actions(RuntimeChange::KernelUpdated, &opts);
-        assert!(plan.auto_manage_kernel);
+        assert_eq!(plan.kernel_impact, KernelChangeImpact::RestartIfRunning);
         assert!(!plan.apply_proxy_runtime);
         assert!(plan.patch_active_config);
     }

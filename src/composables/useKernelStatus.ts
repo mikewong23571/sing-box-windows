@@ -21,6 +21,14 @@ export const useKernelStatus = (store?: KernelStore) => {
   const { status, isRunning, isReady, isStarting, isStopping, isLoading } = storeToRefs(kernelStore)
 
   const statusState = computed<KernelStatusState>(() => {
+    if (status.value.observed_state === 'starting') return 'starting'
+    if (status.value.observed_state === 'stopping') return 'stopping'
+    if (status.value.observed_state === 'failed') return 'failed'
+    if (status.value.observed_state === 'crashed') return 'crashed'
+    if (status.value.observed_state === 'degraded') return 'disconnected'
+    if (status.value.observed_state === 'running') return 'running'
+    if (status.value.observed_state === 'stopped') return 'stopped'
+
     if (status.value.kernel_state === 'starting') return 'starting'
     if (status.value.kernel_state === 'stopping') return 'stopping'
     if (status.value.kernel_state === 'failed') return 'failed'

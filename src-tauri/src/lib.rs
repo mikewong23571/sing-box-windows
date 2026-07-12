@@ -166,17 +166,26 @@ pub fn run() {
                 )
                 .await;
 
-                // 后端启动后立即尝试自动管理内核（尊重 auto_start_kernel 设置）
-                let app_start_options =
-                    crate::app::runtime::change::RuntimeApplyOptions::new("app-start");
-                if let Err(err) = crate::app::runtime::orchestrator::apply_runtime_change(
-                    &app_handle,
-                    crate::app::runtime::change::RuntimeChange::KernelUpdated,
-                    app_start_options,
+                // 应用启动是唯一允许 auto_start_kernel 改变会话期望状态的入口。
+                // 配置、订阅和内核更新只允许保持现有启停状态。
+                match crate::app::storage::enhanced_storage_service::db_get_app_config(
+                    app_handle.clone(),
                 )
                 .await
                 {
-                    tracing::warn!("启动阶段应用运行态失败: {}", err);
+                    Ok(config) => {
+                        if let Err(err) = crate::app::core::kernel_service::orchestrated_startup_reconcile(
+                            app_handle.clone(),
+                            config.auto_start_kernel,
+                        )
+                        .await
+                        {
+                            tracing::warn!("启动阶段协调内核状态失败: {}", err);
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!("启动阶段读取内核自动启动设置失败，保持停止: {}", err);
+                    }
                 }
 
                 if let Err(err) =
@@ -242,7 +251,6 @@ pub fn run() {
             crate::app::core::kernel_service::status::kernel_get_status_enhanced,
             crate::app::core::kernel_service::status::kernel_get_snapshot,
             crate::app::core::kernel_service::status::kernel_check_health,
-            crate::app::core::kernel_auto_manage::kernel_auto_manage,
             crate::app::core::kernel_service::lifecycle::apply_proxy_settings,
             // Network - Subscription service commands
             crate::app::network::subscription_service::download_subscription,
@@ -332,7 +340,5 @@ fn show_window(app: &AppHandle) {
     }
 }
 
-
 #[cfg(test)]
 mod wry_app_tests;
-

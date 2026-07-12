@@ -1,6 +1,6 @@
 use super::*;
-use crate::app::core::kernel_service::PROCESS_MANAGER;
 use crate::app::constants::paths;
+use crate::app::core::kernel_service::PROCESS_MANAGER;
 use crate::test_support::TempWorkspace;
 use std::fs;
 use std::path::Path;
@@ -124,7 +124,10 @@ async fn collect_probe_when_running_with_api() {
     fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
 
     let (port, server) = spawn_version_mock(200, "1.12.0-fake").await;
-    PROCESS_MANAGER.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+    PROCESS_MANAGER
+        .start_inner::<tauri::Wry>(None, &cfg, false)
+        .await
+        .unwrap();
 
     let probe = collect_kernel_runtime_probe(port).await;
     assert!(probe.process_running);
@@ -254,11 +257,8 @@ fn build_status_payload_from_probe_fields() {
     assert_eq!(payload["version"], "1.2.3");
     assert_eq!(payload["error"], "ws fail");
 
-    let payload2 = build_status_payload_from_probe(
-        &KernelRuntimeProbe::default(),
-        None,
-        Some("diag".into()),
-    );
+    let payload2 =
+        build_status_payload_from_probe(&KernelRuntimeProbe::default(), None, Some("diag".into()));
     assert_eq!(payload2["error"], "diag");
 }
 

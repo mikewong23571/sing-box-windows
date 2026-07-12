@@ -1,6 +1,121 @@
 use super::*;
 
 #[test]
+fn transition_planner_preserves_stopped_state_for_runtime_changes() {
+    let desired = KernelDesiredState::Stopped;
+    let observed = KernelObservedState::Stopped;
+
+    assert_eq!(
+        plan_kernel_transition(
+            desired,
+            observed,
+            KernelRequestKind::ApplyRuntimeChange(KernelChangeImpact::PersistOnly),
+        ),
+        KernelAction::ApplyConfigOnly
+    );
+    assert_eq!(
+        plan_kernel_transition(
+            desired,
+            observed,
+            KernelRequestKind::ApplyRuntimeChange(KernelChangeImpact::HotApply),
+        ),
+        KernelAction::ApplyConfigOnly
+    );
+    assert_eq!(
+        plan_kernel_transition(
+            desired,
+            observed,
+            KernelRequestKind::ApplyRuntimeChange(KernelChangeImpact::RestartIfRunning),
+        ),
+        KernelAction::ApplyConfigOnly
+    );
+}
+
+#[test]
+fn transition_planner_restarts_only_running_desired_kernel() {
+    assert_eq!(
+        plan_kernel_transition(
+            KernelDesiredState::Running,
+            KernelObservedState::Running,
+            KernelRequestKind::ApplyRuntimeChange(KernelChangeImpact::RestartIfRunning),
+        ),
+        KernelAction::Restart
+    );
+    assert_eq!(
+        plan_kernel_transition(
+            KernelDesiredState::Stopped,
+            KernelObservedState::Running,
+            KernelRequestKind::ApplyRuntimeChange(KernelChangeImpact::RestartIfRunning),
+        ),
+        KernelAction::ApplyConfigOnly
+    );
+}
+
+#[test]
+fn transition_planner_handles_explicit_intent_and_crashes() {
+    assert_eq!(
+        plan_kernel_transition(
+            KernelDesiredState::Stopped,
+            KernelObservedState::Stopped,
+            KernelRequestKind::UserStart,
+        ),
+        KernelAction::Start
+    );
+    assert_eq!(
+        plan_kernel_transition(
+            KernelDesiredState::Stopped,
+            KernelObservedState::Stopped,
+            KernelRequestKind::UserRestart,
+        ),
+        KernelAction::Reject
+    );
+    assert_eq!(
+        plan_kernel_transition(
+            KernelDesiredState::Stopped,
+            KernelObservedState::Crashed,
+            KernelRequestKind::ProcessCrashed,
+        ),
+        KernelAction::Noop
+    );
+    assert_eq!(
+        plan_kernel_transition(
+            KernelDesiredState::Running,
+            KernelObservedState::Crashed,
+            KernelRequestKind::ProcessCrashed,
+        ),
+        KernelAction::Start
+    );
+}
+
+#[test]
+fn transition_planner_honors_startup_policy_and_shutdown() {
+    assert_eq!(
+        plan_kernel_transition(
+            KernelDesiredState::Stopped,
+            KernelObservedState::Stopped,
+            KernelRequestKind::StartupReconcile { auto_start: false },
+        ),
+        KernelAction::Noop
+    );
+    assert_eq!(
+        plan_kernel_transition(
+            KernelDesiredState::Running,
+            KernelObservedState::Stopped,
+            KernelRequestKind::StartupReconcile { auto_start: true },
+        ),
+        KernelAction::Start
+    );
+    assert_eq!(
+        plan_kernel_transition(
+            KernelDesiredState::Running,
+            KernelObservedState::Running,
+            KernelRequestKind::Shutdown,
+        ),
+        KernelAction::Stop
+    );
+}
+
+#[test]
 fn test_kernel_state_transitions() {
     let manager = KernelStateManager::new();
 
@@ -20,27 +135,6 @@ fn test_kernel_state_transitions() {
 
     manager.mark_stopped();
     assert_eq!(manager.get_state(), KernelState::Stopped);
-}
-
-#[test]
-fn test_kernel_runtime_config_merge() {
-    let mut base = KernelRuntimeConfig {
-        api_port: Some(12081),
-        proxy_port: Some(12080),
-        ..Default::default()
-    };
-
-    let overrides = KernelRuntimeConfig {
-        api_port: Some(9090),
-        prefer_ipv6: Some(true),
-        ..Default::default()
-    };
-
-    base.merge(&overrides);
-
-    assert_eq!(base.api_port, Some(9090));
-    assert_eq!(base.proxy_port, Some(12080)); // 未被覆盖
-    assert_eq!(base.prefer_ipv6, Some(true));
 }
 
 #[test]

@@ -963,7 +963,8 @@ impl ProcessManager {
         info!("正在重启内核进程(inner)，TUN模式: {}", tun_enabled);
         self.stop(app_handle).await?;
         sleep(Duration::from_millis(1000)).await;
-        self.start_inner(app_handle, config_path, tun_enabled).await?;
+        self.start_inner(app_handle, config_path, tun_enabled)
+            .await?;
         info!("内核进程重启完成(inner)");
         Ok(())
     }
@@ -1205,7 +1206,10 @@ exit 0
 
         let _ = manager.read_stderr_output().await;
 
-        manager.stop::<tauri::Wry>(None).await.expect("stop should succeed");
+        manager
+            .stop::<tauri::Wry>(None)
+            .await
+            .expect("stop should succeed");
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         let _ = manager.is_running().await;
     }
@@ -1233,7 +1237,10 @@ exit 0
         let ws = TempWorkspace::new();
         let manager = ProcessManager::new();
         manager.clear_managed_pid();
-        manager.kill_existing_processes::<tauri::Wry>(None).await.unwrap();
+        manager
+            .kill_existing_processes::<tauri::Wry>(None)
+            .await
+            .unwrap();
         let _ = ws;
     }
 
@@ -1245,10 +1252,16 @@ exit 0
         std::fs::write(&cfg_path, r#"{"log":{"level":"info"}}"#).unwrap();
 
         let manager = ProcessManager::new();
-        manager.start_inner::<tauri::Wry>(None, &cfg_path, false).await.unwrap();
+        manager
+            .start_inner::<tauri::Wry>(None, &cfg_path, false)
+            .await
+            .unwrap();
         assert!(manager.is_running().await);
         manager.stop::<tauri::Wry>(None).await.unwrap();
-        manager.start_inner::<tauri::Wry>(None, &cfg_path, false).await.unwrap();
+        manager
+            .start_inner::<tauri::Wry>(None, &cfg_path, false)
+            .await
+            .unwrap();
         assert!(manager.is_running().await);
         manager.stop::<tauri::Wry>(None).await.unwrap();
     }
@@ -1273,7 +1286,10 @@ exit 0
         let cfg = ws.path().join("sing-box/config.json");
         std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
         let manager = ProcessManager::new();
-        manager.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        manager
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
         let _ = manager.start_inner::<tauri::Wry>(None, &cfg, false).await;
         let _ = manager.read_stderr_output().await;
         manager.clear_stderr_tail();
@@ -1286,7 +1302,9 @@ exit 0
         let ws = TempWorkspace::new();
         let manager = ProcessManager::new();
         manager.clear_managed_pid();
-        let _ = manager.force_kill_kernel_processes_by_name::<tauri::Wry>(None).await;
+        let _ = manager
+            .force_kill_kernel_processes_by_name::<tauri::Wry>(None)
+            .await;
         let _ = ws;
     }
 
@@ -1305,9 +1323,9 @@ exit 0
 
     #[tokio::test]
     async fn global_process_manager_start_stop_via_kernel_service() {
-        use crate::app::core::kernel_service::PROCESS_MANAGER as GLOBAL_PM;
-        use crate::app::core::kernel_service::status::is_kernel_running;
         use crate::app::constants::paths;
+        use crate::app::core::kernel_service::status::is_kernel_running;
+        use crate::app::core::kernel_service::PROCESS_MANAGER as GLOBAL_PM;
         use crate::test_support::TempWorkspace;
 
         let ws = TempWorkspace::new();
@@ -1316,7 +1334,10 @@ exit 0
         std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
         std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
 
-        GLOBAL_PM.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        GLOBAL_PM
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
         assert!(GLOBAL_PM.is_running().await);
         assert!(is_kernel_running().await.unwrap());
         let _ = GLOBAL_PM.read_stderr_output().await;
@@ -1334,14 +1355,20 @@ exit 0
         let manager = ProcessManager::new();
         // stop when nothing running
         let _ = manager.stop::<tauri::Wry>(None).await;
-        manager.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        manager
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
         // kill_existing while running
         let _ = manager.kill_existing_processes::<tauri::Wry>(None).await;
         let _ = manager.stop::<tauri::Wry>(None).await;
     }
 
     /// 安装会在 `check` 时输出 legacy DNS 错误的假内核。
-    fn install_fake_kernel_check_fail(work: &std::path::Path, stderr_msg: &str) -> std::path::PathBuf {
+    fn install_fake_kernel_check_fail(
+        work: &std::path::Path,
+        stderr_msg: &str,
+    ) -> std::path::PathBuf {
         let dir = work.join("sing-box");
         std::fs::create_dir_all(&dir).unwrap();
         let kernel = dir.join("sing-box");
@@ -1395,10 +1422,7 @@ exit 0
         let err = manager.validate_config(&cfg).await.unwrap_err().to_string();
         assert!(err.contains("domain strategy") || err.contains("弃用") || err.contains("配置"));
 
-        install_fake_kernel_check_fail(
-            ws.path(),
-            r#"dns.servers: unknown field "strategy""#,
-        );
+        install_fake_kernel_check_fail(ws.path(), r#"dns.servers: unknown field "strategy""#);
         let err2 = manager.validate_config(&cfg).await.unwrap_err().to_string();
         assert!(err2.contains("strategy") || err2.contains("弃用") || err2.contains("配置"));
 
@@ -1461,9 +1485,14 @@ exit 0
         let cfg = ws.path().join("sing-box/config.json");
         std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
         let manager = ProcessManager::new();
-        manager.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        manager
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
         assert!(manager.is_running().await);
-        let _ = manager.force_kill_kernel_processes_by_name::<tauri::Wry>(None).await;
+        let _ = manager
+            .force_kill_kernel_processes_by_name::<tauri::Wry>(None)
+            .await;
         let _ = manager.kill_existing_processes::<tauri::Wry>(None).await;
         let _ = manager.stop::<tauri::Wry>(None).await;
         // 二次 stop 应幂等
@@ -1532,10 +1561,16 @@ exit 0
         let cfg = ws.path().join("sing-box/config.json");
         std::fs::write(&cfg, r#"{"log":{"level":"info"}}"#).unwrap();
         let manager = ProcessManager::new();
-        manager.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        manager
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
         assert!(manager.is_running().await);
         // 第二次启动应杀掉旧进程再起
-        manager.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        manager
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
         assert!(manager.is_running().await);
         let stderr = manager.read_stderr_output().await;
         let _ = stderr;
@@ -1548,9 +1583,14 @@ exit 0
         let manager = ProcessManager::new();
         // 写入不存在的 PID
         manager.persist_managed_pid(4_294_967_294).unwrap();
-        manager.kill_existing_processes::<tauri::Wry>(None).await.unwrap();
+        manager
+            .kill_existing_processes::<tauri::Wry>(None)
+            .await
+            .unwrap();
         // force kill 空名列表
-        let _ = manager.force_kill_kernel_processes_by_name::<tauri::Wry>(None).await;
+        let _ = manager
+            .force_kill_kernel_processes_by_name::<tauri::Wry>(None)
+            .await;
         manager.clear_managed_pid();
         let _ = ws;
     }
@@ -1598,7 +1638,10 @@ exit 0
         // 启动前可能为空
         let before = manager.read_stderr_output().await;
         let _ = before;
-        manager.start_inner::<tauri::Wry>(None, &cfg, false).await.unwrap();
+        manager
+            .start_inner::<tauri::Wry>(None, &cfg, false)
+            .await
+            .unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let after = manager.read_stderr_output().await;
         let _ = after;
@@ -1683,7 +1726,9 @@ exit 0
 }
 
 #[async_trait::async_trait]
-impl<R: tauri::Runtime> crate::app::core::kernel_service::KernelProcessControl<R> for ProcessManager {
+impl<R: tauri::Runtime> crate::app::core::kernel_service::KernelProcessControl<R>
+    for ProcessManager
+{
     async fn start(
         &self,
         app_handle: Option<&tauri::AppHandle<R>>,

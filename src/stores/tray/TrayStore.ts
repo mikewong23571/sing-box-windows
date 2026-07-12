@@ -88,7 +88,7 @@ export const useTrayStore = defineStore('tray', () => {
     }
 
     return {
-      kernelRunning: appStore.isRunning,
+      kernelRunning: kernelStore.isRunning,
       systemProxyEnabled: appStore.systemProxyEnabled,
       tunEnabled: appStore.tunEnabled,
       activeSubscriptionName,
@@ -201,6 +201,22 @@ export const useTrayStore = defineStore('tray', () => {
       return
     }
 
+    if (!kernelStore.isRunning) {
+      try {
+        await appStore.toggleTun(enabled)
+        const applied = await kernelStore.applyProxySettings({ tun_enabled: enabled })
+        if (!applied) {
+          throw new Error(getKernelFailureText(i18n.global.t('notification.applyProxyFailed')))
+        }
+      } catch (error) {
+        console.error('托盘保存TUN配置失败:', error)
+        await appStore.toggleTun(previousTunEnabled)
+      } finally {
+        scheduleSync(true)
+      }
+      return
+    }
+
     const platform = await systemService.getPlatformInfo().catch(() => 'unknown')
     const parseSudoCode = (raw: unknown) => {
       const msg = raw instanceof Error ? raw.message : String(raw || '')
@@ -240,7 +256,7 @@ export const useTrayStore = defineStore('tray', () => {
           await appStore.toggleTun(true)
           await appStore.saveToBackend()
 
-          if (appStore.isRunning) {
+          if (kernelStore.isRunning) {
             await kernelStore.stopKernel({ force: true })
           }
           await systemService.restartAsAdmin()
@@ -416,7 +432,7 @@ export const useTrayStore = defineStore('tray', () => {
     await registerBackendEvents()
 
     registerWatcher(
-      () => appStore.isRunning,
+      () => kernelStore.isRunning,
       () => scheduleSync(false),
     )
 

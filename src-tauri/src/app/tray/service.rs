@@ -4,8 +4,10 @@ use super::model::{
     TrayToggleProxyFeaturePayload, TRAY_ICON_ID,
 };
 use super::state::TrayRuntimeState;
-use crate::app::core::kernel_service::runtime::{apply_proxy_settings, kernel_restart_fast};
+use crate::app::core::kernel_service::runtime::kernel_restart_fast;
 use crate::app::core::kernel_service::status::is_kernel_running;
+use crate::app::runtime::change::{RuntimeApplyOptions, RuntimeChange};
+use crate::app::runtime::orchestrator::apply_runtime_change;
 use crate::app::storage::enhanced_storage_service::db_save_app_config_internal;
 use crate::app::storage::state_model::AppConfig;
 use lazy_static::lazy_static;
@@ -393,10 +395,11 @@ fn build_tray_menu(
         .build(app)
         .map_err(|e| format!("创建托盘菜单项失败: {}", e))?;
 
-    let kernel_status_item = MenuItemBuilder::with_id(menu_ids::KERNEL_STATUS, labels.kernel_status)
-        .enabled(false)
-        .build(app)
-        .map_err(|e| format!("创建内核状态菜单项失败: {}", e))?;
+    let kernel_status_item =
+        MenuItemBuilder::with_id(menu_ids::KERNEL_STATUS, labels.kernel_status)
+            .enabled(false)
+            .build(app)
+            .map_err(|e| format!("创建内核状态菜单项失败: {}", e))?;
 
     let kernel_restart_item =
         MenuItemBuilder::with_id(menu_ids::KERNEL_RESTART, text.restart_kernel)
@@ -467,9 +470,8 @@ fn handle_proxy_toggle_menu_event(app: &AppHandle, feature: &str, enabled: bool)
 }
 
 fn handle_menu_event(app: &AppHandle, menu_id: &str) {
-    let (system_proxy_enabled, tun_enabled) = with_state_read(|state| {
-        (state.system_proxy_enabled, state.tun_enabled)
-    });
+    let (system_proxy_enabled, tun_enabled) =
+        with_state_read(|state| (state.system_proxy_enabled, state.tun_enabled));
     match dispatch_tray_menu(menu_id, system_proxy_enabled, tun_enabled) {
         TrayMenuDispatch::ShowWindow => {
             if let Err(err) = show_main_window(app, true) {
@@ -744,11 +746,11 @@ pub fn request_app_exit(app: &AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn(async move {
         match tokio::time::timeout(
             Duration::from_secs(4),
-            crate::app::core::kernel_service::runtime::stop_kernel::<tauri::Wry>(None),
+            crate::app::core::kernel_service::runtime::orchestrated_stop_kernel(app_handle.clone()),
         )
         .await
         {
-            Ok(Ok(message)) => info!("退出前停止内核成功: {}", message),
+            Ok(Ok(result)) => info!("退出前停止内核完成: {}", result),
             Ok(Err(err)) => warn!("退出前停止内核失败，继续退出: {}", err),
             Err(_) => warn!("退出前停止内核超时，继续退出"),
         }
@@ -760,68 +762,34 @@ pub fn request_app_exit(app: &AppHandle) -> Result<(), String> {
 }
 
 async fn restart_kernel_from_tray(app: &AppHandle) -> Result<(), String> {
-    let result = kernel_restart_fast(
-        app.clone(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    .await?;
+    let result =
+        kernel_restart_fast(app.clone(), None, None, None, None, None, None, None, None).await?;
 
     kernel_json_command_ok(&result, "重启内核失败")?;
     refresh_runtime_state_from_backend(app, false).await
 }
 
 async fn apply_system_proxy_toggle_from_tray(app: &AppHandle, enabled: bool) -> Result<(), String> {
-    let result = apply_proxy_settings(app.clone(), Some(enabled), None).await?;
-    kernel_json_command_ok(&result, "应用系统代理配置失败")?;
-
     let mut app_config =
         crate::app::storage::enhanced_storage_service::db_get_app_config_internal(app).await?;
     app_config.system_proxy_enabled = enabled;
     app_config.proxy_mode =
         derive_proxy_mode(app_config.system_proxy_enabled, app_config.tun_enabled);
     db_save_app_config_internal(app_config, app).await?;
+    apply_runtime_change(
+        app,
+        RuntimeChange::ProxySettingsChanged,
+        RuntimeApplyOptions::new("tray-system-proxy-toggle"),
+    )
+    .await?;
     refresh_runtime_state_from_backend(app, false).await
 }
 
 async fn apply_tun_toggle_from_tray(app: &AppHandle, enabled: bool) -> Result<(), String> {
-    if !enabled {
-        let apply_result = apply_proxy_settings(app.clone(), None, Some(false)).await?;
-        kernel_json_command_ok(&apply_result, "应用 TUN 关闭配置失败")?;
-
-        let restart_result = kernel_restart_fast(
-            app.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(false),
-        )
-        .await?;
-        kernel_json_command_ok(&restart_result, "关闭 TUN 后重启内核失败")?;
-
-        let mut app_config =
-            crate::app::storage::enhanced_storage_service::db_get_app_config_internal(app).await?;
-        app_config.tun_enabled = false;
-        app_config.proxy_mode =
-            derive_proxy_mode(app_config.system_proxy_enabled, app_config.tun_enabled);
-        db_save_app_config_internal(app_config, app).await?;
-        return refresh_runtime_state_from_backend(app, false).await;
-    }
+    let runtime_active = is_kernel_running().await.unwrap_or(false);
 
     #[cfg(target_os = "windows")]
-    {
+    if enabled && runtime_active {
         match classify_tun_enable_privilege_windows(
             crate::app::system::system_service::check_admin(),
         ) {
@@ -836,7 +804,7 @@ async fn apply_tun_toggle_from_tray(app: &AppHandle, enabled: bool) -> Result<()
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
+    if enabled && runtime_active {
         let sudo_status =
             crate::app::system::sudo_service::sudo_password_status(app.clone()).await?;
         match classify_tun_enable_privilege_unix(sudo_status.supported, sudo_status.has_saved) {
@@ -850,37 +818,29 @@ async fn apply_tun_toggle_from_tray(app: &AppHandle, enabled: bool) -> Result<()
         }
     }
 
-    let apply_result = apply_proxy_settings(app.clone(), None, Some(true)).await?;
-    kernel_json_command_ok(&apply_result, "应用 TUN 配置失败")?;
-
-    let restart_result = kernel_restart_fast(
-        app.clone(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(true),
-    )
-    .await?;
-    if let Err(message) = kernel_json_command_ok(&restart_result, "启用 TUN 后重启内核失败") {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        if should_queue_tun_after_sudo_restart_error(&message) {
-            return queue_proxy_toggle_for_frontend(app, "tun", true);
-        }
-
-        return Err(message);
-    }
-
     let mut app_config =
         crate::app::storage::enhanced_storage_service::db_get_app_config_internal(app).await?;
-    app_config.tun_enabled = true;
+    app_config.tun_enabled = enabled;
     app_config.proxy_mode =
         derive_proxy_mode(app_config.system_proxy_enabled, app_config.tun_enabled);
     db_save_app_config_internal(app_config, app).await?;
+
+    if let Err(message) = apply_runtime_change(
+        app,
+        RuntimeChange::AppConfigUpdated,
+        RuntimeApplyOptions::new("tray-tun-toggle")
+            .patch_active_config(true)
+            .restart_if_running(true),
+    )
+    .await
+    {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if enabled && should_queue_tun_after_sudo_restart_error(&message) {
+            return queue_proxy_toggle_for_frontend(app, "tun", true);
+        }
+        return Err(message);
+    }
+
     refresh_runtime_state_from_backend(app, false).await
 }
 
@@ -1170,8 +1130,14 @@ mod tests {
         assert!(labels.current_mode.contains(text.current_status));
 
         assert_eq!(classify_tray_menu_id(menu_ids::SHOW_WINDOW), "show_window");
-        assert_eq!(classify_tray_menu_id(menu_ids::KERNEL_RESTART), "kernel_restart");
-        assert_eq!(classify_tray_menu_id(menu_ids::PROXY_SYSTEM), "proxy_system");
+        assert_eq!(
+            classify_tray_menu_id(menu_ids::KERNEL_RESTART),
+            "kernel_restart"
+        );
+        assert_eq!(
+            classify_tray_menu_id(menu_ids::PROXY_SYSTEM),
+            "proxy_system"
+        );
         assert_eq!(classify_tray_menu_id(menu_ids::PROXY_TUN), "proxy_tun");
         assert_eq!(classify_tray_menu_id(menu_ids::QUIT), "quit");
         assert_eq!(classify_tray_menu_id("nope"), "unknown");
@@ -1191,7 +1157,9 @@ mod tests {
         assert!(should_destroy_window_for_startup_background(true));
         assert!(!should_destroy_window_for_startup_background(false));
         assert!(keep_alive_for_close_behavior(TrayCloseBehavior::Hide));
-        assert!(keep_alive_for_close_behavior(TrayCloseBehavior::Lightweight));
+        assert!(keep_alive_for_close_behavior(
+            TrayCloseBehavior::Lightweight
+        ));
     }
 
     #[test]
@@ -1213,7 +1181,10 @@ mod tests {
         assert!(!s.keep_alive_without_windows);
 
         assert_eq!(close_window_action(TrayCloseBehavior::Hide), "hide");
-        assert_eq!(close_window_action(TrayCloseBehavior::Lightweight), "destroy");
+        assert_eq!(
+            close_window_action(TrayCloseBehavior::Lightweight),
+            "destroy"
+        );
     }
 
     #[test]
@@ -1348,5 +1319,3 @@ mod tests {
         )));
     }
 }
-
-

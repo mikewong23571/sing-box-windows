@@ -135,14 +135,22 @@ fn calc_min_interval_and_collect_due() {
     c.auto_update_interval_minutes = Some(120);
     c.last_update = Some(1);
 
-    assert_eq!(calc_min_interval_minutes(&[a.clone(), b.clone(), c.clone()]), 30);
-    assert_eq!(calc_min_interval_minutes(&[]), DEFAULT_INTERVAL_MINUTES.max(5));
+    assert_eq!(
+        calc_min_interval_minutes(&[a.clone(), b.clone(), c.clone()]),
+        30
+    );
+    assert_eq!(
+        calc_min_interval_minutes(&[]),
+        DEFAULT_INTERVAL_MINUTES.max(5)
+    );
 
     let now = 10_000_000u64;
     let list = [a, b, c];
     let due = collect_subscriptions_due(&list, now);
     // b interval 0 skipped; a no last_update due; c depends on interval
-    assert!(due.iter().any(|s| s.name == "s1" || s.url.contains("example")));
+    assert!(due
+        .iter()
+        .any(|s| s.name == "s1" || s.url.contains("example")));
 }
 
 #[test]
@@ -175,8 +183,14 @@ fn should_apply_runtime_for_subscription_matrix() {
         Some("/a.json"),
         Some("/b.json")
     ));
-    assert!(!should_apply_runtime_for_subscription(None, Some("/a.json")));
-    assert!(!should_apply_runtime_for_subscription(Some("/a.json"), None));
+    assert!(!should_apply_runtime_for_subscription(
+        None,
+        Some("/a.json")
+    ));
+    assert!(!should_apply_runtime_for_subscription(
+        Some("/a.json"),
+        None
+    ));
     assert!(!should_apply_runtime_for_subscription(None, None));
 }
 
@@ -188,20 +202,20 @@ async fn save_health_patches_empty_and_apply() {
     let db = env.workspace.path().join("health.db");
     let storage = env.install_storage_from_path(db.to_str().unwrap()).await;
     let mut sub = sample_sub();
-    sub.config_path = Some(env.workspace.path().join("s1.json").to_string_lossy().to_string());
+    sub.config_path = Some(
+        env.workspace
+            .path()
+            .join("s1.json")
+            .to_string_lossy()
+            .to_string(),
+    );
     storage.save_subscriptions(&[sub.clone()]).await.unwrap();
 
     // empty patches → Ok
     save_health_patches(&env.handle(), &[]).await.unwrap();
 
-    let patch = build_failure_health_patch(
-        sub.config_path.clone(),
-        &sub.url,
-        12345,
-        0,
-        60,
-        "timeout",
-    );
+    let patch =
+        build_failure_health_patch(sub.config_path.clone(), &sub.url, 12345, 0, 60, "timeout");
     save_health_patches(&env.handle(), &[patch]).await.unwrap();
     let loaded = storage.get_subscriptions().await.unwrap();
     assert_eq!(loaded[0].auto_update_fail_count, Some(1));
@@ -266,7 +280,10 @@ async fn run_once_failure_records_health_patch() {
     let env = MockAppEnv::new();
     let db = env.workspace.path().join("auto-fail.db");
     let storage = env.install_storage_from_path(db.to_str().unwrap()).await;
-    storage.save_app_config(&AppConfig::default()).await.unwrap();
+    storage
+        .save_app_config(&AppConfig::default())
+        .await
+        .unwrap();
 
     let mut sub = sample_sub();
     sub.name = "fail".into();
@@ -276,7 +293,9 @@ async fn run_once_failure_records_health_patch() {
     sub.last_update = None;
     storage.save_subscriptions(&[sub]).await.unwrap();
 
-    run_once(&env.handle()).await.expect("run_once handles failure");
+    run_once(&env.handle())
+        .await
+        .expect("run_once handles failure");
     let loaded = storage.get_subscriptions().await.unwrap();
     // 失败应写入 fail_count
     assert!(
@@ -293,7 +312,10 @@ async fn run_once_no_due_subscriptions_is_ok() {
     let env = MockAppEnv::new();
     let db = env.workspace.path().join("auto-empty.db");
     let storage = env.install_storage_from_path(db.to_str().unwrap()).await;
-    storage.save_app_config(&AppConfig::default()).await.unwrap();
+    storage
+        .save_app_config(&AppConfig::default())
+        .await
+        .unwrap();
     let mut sub = sample_sub();
     sub.auto_update_interval_minutes = Some(0); // disabled
     storage.save_subscriptions(&[sub]).await.unwrap();

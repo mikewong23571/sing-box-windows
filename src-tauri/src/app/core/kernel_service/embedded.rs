@@ -395,10 +395,7 @@ pub(crate) async fn download_and_install_external_ui_from_url(
         .await
         .map_err(|e| format!("读取 metacubexd 响应体失败: {}", e))?;
 
-    info!(
-        "metacubexd 下载完成 ({} 字节)，开始解压",
-        bytes.len()
-    );
+    info!("metacubexd 下载完成 ({} 字节)，开始解压", bytes.len());
 
     install_external_ui_from_zip_bytes(&bytes, work_dir).await
 }
@@ -421,21 +418,17 @@ pub(crate) async fn read_embedded_version_public(embedded_dir: &Path) -> Option<
 
 /// 从二进制运行 version 并解析（可测）。
 #[allow(dead_code)]
-pub(crate) async fn read_kernel_version_from_binary_public(
-    kernel_path: &Path,
-) -> Option<String> {
+pub(crate) async fn read_kernel_version_from_binary_public(kernel_path: &Path) -> Option<String> {
     read_kernel_version_from_binary(kernel_path).await
 }
 
 /// 将 zip 数据解压到指定目录
 pub(crate) fn extract_zip_to_dir(bytes: &[u8], target_dir: &Path) -> Result<(), String> {
     use std::fs;
-    fs::create_dir_all(target_dir)
-        .map_err(|e| format!("创建临时目录失败: {}", e))?;
+    fs::create_dir_all(target_dir).map_err(|e| format!("创建临时目录失败: {}", e))?;
 
     let reader = Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(reader)
-        .map_err(|e| format!("解析 zip 失败: {}", e))?;
+    let mut archive = zip::ZipArchive::new(reader).map_err(|e| format!("解析 zip 失败: {}", e))?;
 
     for i in 0..archive.len() {
         let mut file = archive
@@ -448,17 +441,14 @@ pub(crate) fn extract_zip_to_dir(bytes: &[u8], target_dir: &Path) -> Result<(), 
         };
 
         if file.is_dir() {
-            fs::create_dir_all(&out_path)
-                .map_err(|e| format!("创建目录失败: {}", e))?;
+            fs::create_dir_all(&out_path).map_err(|e| format!("创建目录失败: {}", e))?;
         } else {
             if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("创建父目录失败: {}", e))?;
+                fs::create_dir_all(parent).map_err(|e| format!("创建父目录失败: {}", e))?;
             }
-            let mut outfile = fs::File::create(&out_path)
-                .map_err(|e| format!("创建文件失败: {}", e))?;
-            std::io::copy(&mut file, &mut outfile)
-                .map_err(|e| format!("写入文件失败: {}", e))?;
+            let mut outfile =
+                fs::File::create(&out_path).map_err(|e| format!("创建文件失败: {}", e))?;
+            std::io::copy(&mut file, &mut outfile).map_err(|e| format!("写入文件失败: {}", e))?;
 
             #[cfg(unix)]
             {
@@ -490,4 +480,3 @@ pub(crate) fn find_single_subdirectory(dir: &Path) -> Option<std::path::PathBuf>
 #[cfg(test)]
 #[path = "embedded.tests.rs"]
 mod tests;
-

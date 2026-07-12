@@ -29,6 +29,7 @@ use tracing::{info, warn};
 #[derive(Debug, Clone, Serialize)]
 pub struct SubscriptionPersistResult {
     pub config_path: String,
+    pub config_changed: bool,
     pub subscription_upload: Option<u64>,
     pub subscription_download: Option<u64>,
     pub subscription_total: Option<u64>,
@@ -57,7 +58,10 @@ pub(crate) fn normalized_active_config_path(path: &Option<String>) -> Option<&st
         .filter(|value| !value.is_empty())
 }
 
-pub(crate) fn active_config_change_requires_restart(previous: &Option<String>, next: &Option<String>) -> bool {
+pub(crate) fn active_config_change_requires_restart(
+    previous: &Option<String>,
+    next: &Option<String>,
+) -> bool {
     normalized_active_config_path(previous) != normalized_active_config_path(next)
 }
 
@@ -288,6 +292,7 @@ pub(crate) async fn download_subscription_core<R: Runtime>(
     }
 
     let target_path = resolve_target_config_path(file_name, config_path)?;
+    let previous_content = std::fs::read_to_string(&target_path).ok();
     let trimmed_url = url.trim();
     info!("开始下载订阅: {}", trimmed_url);
     let (response_text, userinfo) = fetch_subscription_content(trimmed_url)
@@ -308,20 +313,12 @@ pub(crate) async fn download_subscription_core<R: Runtime>(
         }
     }
 
-    if apply_runtime {
-        let active_result = set_active_config_path_internal(
-            app_handle,
-            Some(target_path.to_string_lossy().to_string()),
-        )
-        .await;
-
-        if let Err(e) = active_result {
-            warn!("写入激活配置指针失败: {}", e);
-        }
-
+    let config_changed =
+        previous_content.as_deref() != std::fs::read_to_string(&target_path).ok().as_deref();
+    if apply_runtime && config_changed {
         let options = RuntimeApplyOptions::new("subscription-download")
             .patch_active_config(true)
-            .force_restart(true)
+            .restart_if_running(true)
             .use_original_config_hint(Some(use_original_config));
         if let Err(e) =
             apply_runtime_change(app_handle, RuntimeChange::SubscriptionApplied, options).await
@@ -339,6 +336,7 @@ pub(crate) async fn download_subscription_core<R: Runtime>(
     Ok(build_subscription_persist_result(
         &target_path,
         userinfo.as_ref(),
+        config_changed,
     ))
 }
 
@@ -360,7 +358,7 @@ pub async fn download_subscription(
         use_original_config,
         file_name,
         config_path,
-        apply_runtime.unwrap_or(true),
+        apply_runtime.unwrap_or(false),
         proxy_port,
         api_port,
     )
@@ -391,13 +389,9 @@ pub(crate) async fn add_manual_subscription_core<R: Runtime>(
     }
 
     let target_path = resolve_target_config_path(file_name, config_path)?;
+    let previous_content = std::fs::read_to_string(&target_path).ok();
 
-    persist_manual_subscription_content(
-        &content,
-        use_original_config,
-        &app_config,
-        &target_path,
-    )?;
+    persist_manual_subscription_content(&content, use_original_config, &app_config, &target_path)?;
 
     // 程序生成的配置需重注自定义规则；原始订阅不改其 route 结构。
     if !use_original_config {
@@ -406,20 +400,12 @@ pub(crate) async fn add_manual_subscription_core<R: Runtime>(
         }
     }
 
-    if apply_runtime {
-        let active_result = set_active_config_path_internal(
-            app_handle,
-            Some(target_path.to_string_lossy().to_string()),
-        )
-        .await;
-
-        if let Err(e) = active_result {
-            warn!("写入激活配置指针失败: {}", e);
-        }
-
+    let config_changed =
+        previous_content.as_deref() != std::fs::read_to_string(&target_path).ok().as_deref();
+    if apply_runtime && config_changed {
         let options = RuntimeApplyOptions::new("subscription-manual")
             .patch_active_config(true)
-            .force_restart(true)
+            .restart_if_running(true)
             .use_original_config_hint(Some(use_original_config));
         if let Err(e) =
             apply_runtime_change(app_handle, RuntimeChange::SubscriptionApplied, options).await
@@ -428,7 +414,11 @@ pub(crate) async fn add_manual_subscription_core<R: Runtime>(
         }
     }
 
-    Ok(build_subscription_persist_result(&target_path, None))
+    Ok(build_subscription_persist_result(
+        &target_path,
+        None,
+        config_changed,
+    ))
 }
 
 #[tauri::command]
@@ -449,7 +439,7 @@ pub async fn add_manual_subscription(
         use_original_config,
         file_name,
         config_path,
-        apply_runtime.unwrap_or(true),
+        apply_runtime.unwrap_or(false),
         proxy_port,
         api_port,
     )
@@ -478,9 +468,11 @@ pub(crate) fn read_config_file_content(config_path: &Path) -> Result<String, Str
 pub(crate) fn build_subscription_persist_result(
     config_path: &Path,
     userinfo: Option<&SubscriptionUserInfo>,
+    config_changed: bool,
 ) -> SubscriptionPersistResult {
     SubscriptionPersistResult {
         config_path: config_path.to_string_lossy().to_string(),
+        config_changed,
         subscription_upload: userinfo.and_then(|info| info.upload),
         subscription_download: userinfo.and_then(|info| info.download),
         subscription_total: userinfo.and_then(|info| info.total),
@@ -562,9 +554,11 @@ pub async fn set_active_config_path(
     app_handle: AppHandle,
     config_path: Option<String>,
     use_original_config: Option<bool>,
+    restart_if_running: Option<bool>,
 ) -> Result<(), String> {
-    let (app_config, requires_restart) =
+    let (app_config, path_changed) =
         set_active_config_path_internal(&app_handle, config_path).await?;
+    let requires_restart = path_changed || restart_if_running.unwrap_or(false);
 
     // 切换活动配置后补注自定义规则（原始订阅跳过），避免旧文件上无规则或规则被覆盖后丢失。
     let skip_inject = match use_original_config {
@@ -585,8 +579,7 @@ pub async fn set_active_config_path(
     };
     if !skip_inject {
         if let Some(path) = app_config.active_config_path.as_deref() {
-            if let Err(e) =
-                inject_custom_rules_into_config_file(&app_handle, Path::new(path)).await
+            if let Err(e) = inject_custom_rules_into_config_file(&app_handle, Path::new(path)).await
             {
                 warn!("切换活动配置后注入自定义规则失败: {}", e);
             }
@@ -595,7 +588,7 @@ pub async fn set_active_config_path(
 
     let options = RuntimeApplyOptions::new("active-config-path-updated")
         .patch_active_config(true)
-        .force_restart(requires_restart)
+        .restart_if_running(requires_restart)
         .use_original_config_hint(use_original_config);
     apply_runtime_change(&app_handle, RuntimeChange::ActiveConfigChanged, options).await?;
 

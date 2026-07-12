@@ -40,6 +40,8 @@ export default {
     stopped: '停止中',
     failed: '失敗',
     crashed: 'クラッシュ',
+    desiredRunning: '実行を維持',
+    desiredStopped: '停止を維持',
   },
 
   // 首页
@@ -302,6 +304,7 @@ export default {
     directConnect: 'ローカル直接接続',
     blockAction: 'ブロック',
     noRulesData: 'ルールデータがありません',
+    kernelNotRunning: '実行時ルールを表示するにはコアを起動してください',
     adjustSearchOrFilters: '検索条件やフィルター条件を調整してください',
     clickRefreshToGetRules: '更新ボタンをクリックしてルールデータを取得してください',
     getRules: 'ルールを取得',
@@ -572,6 +575,8 @@ export default {
     autoStart: {
       app: 'システム起動時に起動',
       appDesc: 'システム起動時にアプリを自動的に実行',
+      kernel: 'アプリ起動時にカーネルを起動',
+      kernelDesc: 'アプリ起動時のみ適用され、ホームから手動で起動できます',
     },
 
     // 启动设置

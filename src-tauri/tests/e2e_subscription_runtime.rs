@@ -1,9 +1,9 @@
 //! Integration-level L3 journeys using only public crate APIs.
 mod common;
 
+use app_lib::app::core::kernel_service::KernelChangeImpact;
 use app_lib::app::core::proxy_service::{
-    apply_system_proxy_for_state, write_inbounds_for_state, ProxyRuntimeState,
-    RecordingSystemProxy,
+    apply_system_proxy_for_state, write_inbounds_for_state, ProxyRuntimeState, RecordingSystemProxy,
 };
 use app_lib::app::core::tun_profile::TunProxyOptions;
 use app_lib::app::runtime::change::{plan_runtime_actions, RuntimeApplyOptions, RuntimeChange};
@@ -21,10 +21,12 @@ use std::fs;
 fn l3_int_runtime_plan_subscription_applied() {
     let plan = plan_runtime_actions(
         RuntimeChange::SubscriptionApplied,
-        &RuntimeApplyOptions::new("int").patch_active_config(true),
+        &RuntimeApplyOptions::new("int")
+            .patch_active_config(true)
+            .restart_if_running(true),
     );
     assert!(plan.apply_proxy_runtime);
-    assert!(plan.auto_manage_kernel);
+    assert_eq!(plan.kernel_impact, KernelChangeImpact::RestartIfRunning);
 }
 
 /// L3-int-02: write inbounds + recording proxy without OS side effects

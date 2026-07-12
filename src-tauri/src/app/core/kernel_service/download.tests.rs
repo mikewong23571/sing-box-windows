@@ -7,8 +7,8 @@ use std::path::PathBuf;
 fn write_zip_with_nested_exe(path: &Path, exe_name: &str) {
     let file = fs::File::create(path).unwrap();
     let mut zip = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     zip.add_directory("nested/", options).unwrap();
     zip.start_file(format!("nested/{}", exe_name), options)
         .unwrap();
@@ -38,9 +38,7 @@ async fn extract_zip_and_find_nested_executable() {
     write_zip_with_nested_exe(&zip_path, "sing-box");
 
     extract_archive(&zip_path, &extract_to).await.unwrap();
-    let found = find_executable_file(&extract_to, "sing-box")
-        .await
-        .unwrap();
+    let found = find_executable_file(&extract_to, "sing-box").await.unwrap();
     assert!(found.ends_with("sing-box"));
     assert!(found.is_file());
 }
@@ -52,9 +50,7 @@ async fn extract_tar_gz_archive_works() {
     let extract_to = ws.join("out_tg");
     write_tar_gz_with_file(&archive, "sing-box", b"binary");
 
-    extract_tar_gz_archive(&archive, &extract_to)
-        .await
-        .unwrap();
+    extract_tar_gz_archive(&archive, &extract_to).await.unwrap();
     assert!(extract_to.join("sing-box").is_file());
 }
 
@@ -220,7 +216,10 @@ async fn deploy_kernel_from_extract_dir_with_replace() {
         .await
         .unwrap();
     assert_eq!(deployed, kernel_dir.join(exe_name));
-    assert_eq!(std::fs::read(kernel_dir.join(exe_name)).unwrap(), b"new-bin");
+    assert_eq!(
+        std::fs::read(kernel_dir.join(exe_name)).unwrap(),
+        b"new-bin"
+    );
     // leftover version dir should be cleaned
     assert!(!kernel_dir.join("sing-box-1.0.0-linux-amd64").exists());
 }
@@ -280,7 +279,9 @@ async fn download_file_to_path_http_error() {
             let mut buf = [0u8; 256];
             let _ = s.read(&mut buf).await;
             let _ = s
-                .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
                 .await;
         }
     });
@@ -327,11 +328,17 @@ async fn try_download_from_urls_succeeds_on_second_source() {
     // first request 500, second 200
     tokio::spawn(async move {
         for i in 0..4 {
-            let Ok((mut s, _)) = listener.accept().await else { break; };
+            let Ok((mut s, _)) = listener.accept().await else {
+                break;
+            };
             let mut buf = [0u8; 512];
             let _ = s.read(&mut buf).await;
             if i == 0 {
-                let _ = s.write_all(b"HTTP/1.1 500 ERR\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                let _ = s
+                    .write_all(
+                        b"HTTP/1.1 500 ERR\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await;
             } else {
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -356,10 +363,7 @@ async fn try_download_from_urls_all_fail() {
     let ws = TempWorkspace::new();
     let dest = ws.join("nope.bin");
     let err = try_download_from_urls(
-        &[
-            "http://127.0.0.1:1/x".into(),
-            "http://127.0.0.1:1/y".into(),
-        ],
+        &["http://127.0.0.1:1/x".into(), "http://127.0.0.1:1/y".into()],
         &dest,
     )
     .await;
@@ -446,7 +450,11 @@ fn prepare_kernel_download_layout_creates_temp() {
     assert!(kd.ends_with("sing-box"));
     assert!(temp.ends_with("update_temp"));
     assert!(temp.exists());
-    assert!(dl.file_name().unwrap().to_string_lossy().contains("sing-box"));
+    assert!(dl
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .contains("sing-box"));
     // 再次调用应清空 temp 内容
     fs::write(temp.join("stale"), b"x").unwrap();
     let (_, temp2, _) = prepare_kernel_download_layout(ws.path(), "other.zip").unwrap();
@@ -464,8 +472,7 @@ fn build_kernel_download_progress_payload_fields() {
 #[tokio::test]
 async fn install_kernel_from_archive_zip_and_missing() {
     let ws = TempWorkspace::new();
-    let (kernel_dir, temp, _) =
-        prepare_kernel_download_layout(ws.path(), "k.zip").unwrap();
+    let (kernel_dir, temp, _) = prepare_kernel_download_layout(ws.path(), "k.zip").unwrap();
     let archive = temp.join("k.zip");
     write_zip_with_nested_exe(&archive, kernel_executable_name());
 
@@ -485,8 +492,7 @@ async fn install_kernel_from_archive_zip_and_missing() {
 #[tokio::test]
 async fn install_kernel_from_archive_tar_gz() {
     let ws = TempWorkspace::new();
-    let (kernel_dir, temp, _) =
-        prepare_kernel_download_layout(ws.path(), "k.tar.gz").unwrap();
+    let (kernel_dir, temp, _) = prepare_kernel_download_layout(ws.path(), "k.tar.gz").unwrap();
     let archive = temp.join("k.tar.gz");
     write_tar_gz_with_file(&archive, kernel_executable_name(), b"#!/bin/sh\necho ok\n");
     let deployed = install_kernel_from_archive(&archive, &temp, &kernel_dir)
@@ -499,8 +505,7 @@ async fn install_kernel_from_archive_tar_gz() {
 #[tokio::test]
 async fn install_kernel_from_archive_bad_zip_errors() {
     let ws = TempWorkspace::new();
-    let (kernel_dir, temp, _) =
-        prepare_kernel_download_layout(ws.path(), "bad.zip").unwrap();
+    let (kernel_dir, temp, _) = prepare_kernel_download_layout(ws.path(), "bad.zip").unwrap();
     let archive = temp.join("bad.zip");
     fs::write(&archive, b"not-zip").unwrap();
     let err = install_kernel_from_archive(&archive, &temp, &kernel_dir).await;
@@ -532,9 +537,7 @@ async fn download_file_to_path_without_content_length() {
             let mut buf = [0u8; 512];
             let _ = s.read(&mut buf).await;
             // 无 Content-Length，靠 Connection: close 结束
-            let resp = format!(
-                "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n"
-            );
+            let resp = format!("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
             let _ = s.write_all(resp.as_bytes()).await;
             let _ = s.write_all(body).await;
         }
@@ -572,15 +575,14 @@ async fn download_and_install_kernel_from_urls_local_zip() {
     });
 
     let url = format!("http://127.0.0.1:{}/k.zip", port);
-    let deployed = download_and_install_kernel_from_urls(
-        &[url],
-        ws.path(),
-        "k.zip",
-    )
-    .await
-    .unwrap();
+    let deployed = download_and_install_kernel_from_urls(&[url], ws.path(), "k.zip")
+        .await
+        .unwrap();
     assert!(deployed.is_file());
-    assert_eq!(deployed.file_name().unwrap().to_string_lossy(), kernel_executable_name());
+    assert_eq!(
+        deployed.file_name().unwrap().to_string_lossy(),
+        kernel_executable_name()
+    );
 }
 
 #[test]
@@ -676,11 +678,7 @@ async fn try_download_from_urls_first_success_short_circuits() {
             let body = b"ok";
             let _ = s
                 .write_all(
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-                        body.len()
-                    )
-                    .as_bytes(),
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes(),
                 )
                 .await;
             let _ = s.write_all(body).await;

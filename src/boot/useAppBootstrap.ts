@@ -23,9 +23,9 @@ export interface AppBootstrapDeps {
       initializeStore: () => Promise<void>
       setMessageInstance: MessageSetter
       clearMessages: () => void
-      setRunningState: (running: boolean) => void
       showWarningMessage?: (content: string) => void
       activeConfigPath: string | null
+      setActiveConfigPath: (path: string | null) => Promise<void>
     }
     localeStore: {
       initializeStore: () => Promise<void>
@@ -181,11 +181,11 @@ export function useAppBootstrap(deps: AppBootstrapDeps) {
     // 启动时优先使用 AppConfig.active_config_path（内核实际读取的“权威值”），
     // 再回退到订阅 Store 的高亮项，避免出现“高亮与内核配置不一致”。
     const activeSub = subStore.getActiveSubscription()
-    const desiredConfigPath = appStore.activeConfigPath || activeSub?.configPath || null
-    if (desiredConfigPath) {
-      await subscriptionService.setActiveConfig(desiredConfigPath, {
+    if (!appStore.activeConfigPath && activeSub?.configPath) {
+      await subscriptionService.setActiveConfig(activeSub.configPath, {
         useOriginalConfig: activeSub?.useOriginalConfig,
       })
+      await appStore.setActiveConfigPath(activeSub.configPath)
     }
 
     await localeStore.initializeStore()

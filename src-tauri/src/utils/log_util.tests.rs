@@ -77,11 +77,13 @@ fn perform_cleanup_keeps_newest_and_deletes_old() {
         .collect();
 
     // other.txt 保留 + 最多 max 个 app.log*
-    let log_files = remaining
-        .iter()
-        .filter(|n| n.starts_with(&base))
-        .count();
-    assert!(log_files <= max, "log_files={} remaining={:?}", log_files, remaining);
+    let log_files = remaining.iter().filter(|n| n.starts_with(&base)).count();
+    assert!(
+        log_files <= max,
+        "log_files={} remaining={:?}",
+        log_files,
+        remaining
+    );
     assert!(remaining.iter().any(|n| n == "other.txt"));
 }
 
@@ -100,7 +102,8 @@ fn filetime_set_mtime(path: &std::path::Path, mtime: SystemTime) {
 async fn cleanup_once_via_spawn_blocking() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
-        tmp.path().join(format!("{}.log", crate::app::log::DEFAULT_FILE_PREFIX)),
+        tmp.path()
+            .join(format!("{}.log", crate::app::log::DEFAULT_FILE_PREFIX)),
         b"x",
     )
     .unwrap();

@@ -114,7 +114,7 @@ export class ProxyService {
       }
 
       // 如果内核正在运行，需要重启
-      if (this.appStore.isRunning) {
+      if (this.kernelStore.isRunning) {
         try {
           if (messageCallback) messageCallback('info', this.t('home.status.restarting'))
           else this.notificationService.info(this.t('home.status.restarting'))

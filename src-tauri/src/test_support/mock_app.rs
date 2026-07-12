@@ -63,8 +63,8 @@ impl MockAppEnv {
 mod emit_tests {
     use super::MockAppEnv;
     use crate::app::core::kernel_service::utils::{
-        emit_kernel_error, emit_kernel_started, emit_kernel_starting, emit_kernel_stopped,
-        emit_kernel_status, KernelStatusPayload,
+        emit_kernel_error, emit_kernel_started, emit_kernel_starting, emit_kernel_status,
+        emit_kernel_stopped, KernelStatusPayload,
     };
 
     #[test]
@@ -87,7 +87,8 @@ mod mock_app_e2e {
         resolve_proxy_runtime_state_from_config, start_kernel_process_and_verify, ProxyOverrides,
     };
     use crate::app::core::kernel_service::utils::{
-        emit_kernel_started, emit_kernel_starting, resolve_config_path, resolve_config_path_or_default,
+        emit_kernel_started, emit_kernel_starting, resolve_config_path,
+        resolve_config_path_or_default,
     };
     use crate::app::core::proxy_service::{
         apply_proxy_runtime_state_with, inject_custom_rules_into_config_file,
@@ -215,8 +216,10 @@ exit 0
         fs::remove_file(&bak).ok();
         fs::write(&cfg_path, b"not-json").unwrap();
         ensure_singbox_config(&h).await.unwrap();
-        assert!(serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&cfg_path).unwrap())
-            .is_ok());
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&cfg_path).unwrap())
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -320,7 +323,13 @@ exit 0
         let h = env.handle();
         let storage = env
             .app
-            .try_state::<std::sync::Arc<tokio::sync::OnceCell<std::sync::Arc<crate::app::storage::enhanced_storage_service::EnhancedStorageService>>>>()
+            .try_state::<std::sync::Arc<
+                tokio::sync::OnceCell<
+                    std::sync::Arc<
+                        crate::app::storage::enhanced_storage_service::EnhancedStorageService,
+                    >,
+                >,
+            >>()
             .unwrap();
         let storage = storage.get().unwrap().clone();
 
@@ -351,7 +360,11 @@ exit 0
             serde_json::from_str(&fs::read_to_string(&cfg_path).unwrap()).unwrap();
         let marked = final_cfg["route"]["rules"]
             .as_array()
-            .map(|a| a.iter().filter(|r| r.get("__custom_rule__").is_some()).count())
+            .map(|a| {
+                a.iter()
+                    .filter(|r| r.get("__custom_rule__").is_some())
+                    .count()
+            })
             .unwrap_or(0);
         assert!(marked >= 1);
     }
@@ -384,9 +397,11 @@ exit 0
         start_kernel_process_and_verify(&cfg_path, port, false)
             .await
             .expect("should pass with mock /version");
-        assert!(crate::app::core::kernel_service::PROCESS_MANAGER
-            .is_running()
-            .await);
+        assert!(
+            crate::app::core::kernel_service::PROCESS_MANAGER
+                .is_running()
+                .await
+        );
 
         // 已运行再调一次
         start_kernel_process_and_verify(&cfg_path, port, false)
@@ -509,7 +524,10 @@ mod mock_app_storage_commands {
         let mut app = AppConfig::default();
         app.proxy_port = 18888;
         db_save_app_config_internal(app.clone(), &h).await.unwrap();
-        assert_eq!(db_get_app_config(h.clone()).await.unwrap().proxy_port, 18888);
+        assert_eq!(
+            db_get_app_config(h.clone()).await.unwrap().proxy_port,
+            18888
+        );
 
         let theme = ThemeConfig {
             is_dark: false,
@@ -522,7 +540,10 @@ mod mock_app_storage_commands {
             locale: "en-US".into(),
         };
         db_save_locale_config(locale, h.clone()).await.unwrap();
-        assert_eq!(db_get_locale_config(h.clone()).await.unwrap().locale, "en-US");
+        assert_eq!(
+            db_get_locale_config(h.clone()).await.unwrap().locale,
+            "en-US"
+        );
 
         db_save_window_config(WindowConfig::default(), h.clone())
             .await

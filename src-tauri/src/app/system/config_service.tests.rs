@@ -193,7 +193,9 @@ fn write_default_and_restore_from_bak() {
     write_default_config(&path, &AppConfig::default()).unwrap();
     assert!(path.exists());
     let content = std::fs::read_to_string(&path).unwrap();
-    assert!(content.contains("inbounds") || content.contains("outbounds") || content.contains("log"));
+    assert!(
+        content.contains("inbounds") || content.contains("outbounds") || content.contains("log")
+    );
 
     let bak = path.with_extension("bak");
     std::fs::copy(&path, &bak).unwrap();
@@ -251,7 +253,11 @@ fn patch_ports_into_config_json_all_branches() {
 
     let mut cfg = serde_json::to_value(generate_base_config(&AppConfig::default())).unwrap();
     // ensure mixed-in exists or inject
-    if cfg["inbounds"].as_array().map(|a| a.is_empty()).unwrap_or(true) {
+    if cfg["inbounds"]
+        .as_array()
+        .map(|a| a.is_empty())
+        .unwrap_or(true)
+    {
         cfg["inbounds"] = json!([{"type":"mixed","tag":"mixed-in","listen_port":1}]);
     }
     patch_ports_into_config_json(&mut cfg, 18080, 19090).unwrap();

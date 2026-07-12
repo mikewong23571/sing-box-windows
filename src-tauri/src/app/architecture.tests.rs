@@ -30,7 +30,6 @@ fn storage_must_not_depend_on_runtime_or_network_services() {
         "crate::app::core::kernel",
         "crate::app::runtime",
         "crate::app::network",
-        "kernel_auto_manage",
         "kernel_service",
         "subscription_service",
     ];
@@ -53,12 +52,17 @@ fn storage_must_not_depend_on_runtime_or_network_services() {
 }
 
 #[test]
-fn runtime_changes_must_use_runtime_orchestrator() {
+fn lifecycle_primitives_must_stay_in_lifecycle_module() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let allowed_files = [
         manifest_dir.join("src/app/architecture.tests.rs"),
-        manifest_dir.join("src/app/core/kernel_auto_manage.rs"),
         manifest_dir.join("src/app/runtime/orchestrator.rs"),
+        manifest_dir.join("src/app/core/kernel_service/lifecycle.rs"),
+    ];
+    let forbidden_patterns = [
+        "restart_kernel_internal(",
+        "start_kernel_with_state(",
+        "stop_kernel(Some(",
     ];
 
     let mut violations = Vec::new();
@@ -68,16 +72,16 @@ fn runtime_changes_must_use_runtime_orchestrator() {
         }
 
         let content = fs::read_to_string(&file).expect("source file should be readable");
-        if content.contains("auto_manage_with_saved_config(")
-            || content.contains("run_auto_manage_with_saved_config(")
-        {
-            violations.push(file.display().to_string());
+        for pattern in forbidden_patterns {
+            if content.contains(pattern) {
+                violations.push(format!("{} contains `{}`", file.display(), pattern));
+            }
         }
     }
 
     assert!(
         violations.is_empty(),
-        "runtime changes must go through runtime::orchestrator:\n{}",
+        "kernel lifecycle primitives must stay behind the lifecycle coordinator:\n{}",
         violations.join("\n")
     );
 }

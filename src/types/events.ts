@@ -80,7 +80,7 @@ export type StartupDiagnosisKind =
   | 'guard_restart_failed'
   | 'unknown'
 
-export type StartupDiagnosisStage = 'preflight' | 'spawn' | 'readiness' | 'guard' | 'auto_manage'
+export type StartupDiagnosisStage = 'preflight' | 'spawn' | 'readiness' | 'guard'
 
 export interface KernelReadinessSnapshot {
   config_validated?: boolean | null

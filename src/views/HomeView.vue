@@ -18,6 +18,7 @@
               <n-space align="center" :size="8">
                 <span class="status-dot" :class="{ running: kernelRunning }"></span>
                 <n-text depth="3">{{ appStatusLabel }}</n-text>
+                <n-text depth="3">· {{ desiredStatusLabel }}</n-text>
               </n-space>
             </n-flex>
           </n-flex>
@@ -53,6 +54,7 @@
             </n-button>
 
             <n-button
+              v-if="kernelRunning"
               type="primary"
               size="large"
               round
@@ -402,6 +404,12 @@ const appStatusLabel = computed(() => {
   }
 })
 
+const desiredStatusLabel = computed(() =>
+  kernelStore.status.desired_state === 'running'
+    ? t('status.desiredRunning')
+    : t('status.desiredStopped'),
+)
+
 const systemProxyEnabled = computed(() => appStore.systemProxyEnabled)
 const tunProxyEnabled = computed(() => appStore.tunEnabled)
 const proxyAddress = computed(() => `127.0.0.1:${appStore.proxyPort}`)
@@ -555,6 +563,24 @@ const enableTunWithKernelRestart = async (options?: { allowSudoRetry?: boolean }
 const toggleTunProxy = async (value: boolean) => {
   if (modeSwitchPending.value) return
 
+  // 停止状态下只保存配置。启用 TUN 所需的提权在用户显式启动内核时处理。
+  if (!kernelRunning.value) {
+    try {
+      modeSwitchPending.value = true
+      await appStore.toggleTun(value)
+      const applied = await kernelStore.applyProxySettings()
+      if (applied) {
+        message.success(t('common.saveSuccess'))
+      } else {
+        await appStore.toggleTun(!value)
+        message.error(getKernelFailureText(t('notification.proxyModeChangeFailed')))
+      }
+    } finally {
+      modeSwitchPending.value = false
+    }
+    return
+  }
+
   if (value) {
     if (isWindowsPlatform.value) {
       await checkAdmin()
@@ -675,7 +701,7 @@ const prepareTunModeWithAdminRestart = async () => {
     }
     await appStore.saveToBackend()
 
-    if (appStore.isRunning) {
+    if (kernelRunning.value) {
       await kernelStore.stopKernel()
     }
 

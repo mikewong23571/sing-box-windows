@@ -11,13 +11,13 @@ use tracing::info;
 /// 平台层进程检测开关（test-util 下可关闭以保证 hermetic）。
 static PLATFORM_KERNEL_DETECTION_ENABLED: AtomicBool = AtomicBool::new(true);
 
-#[cfg(feature = "test-util")]
+#[cfg(any(test, feature = "test-util"))]
 #[allow(dead_code)]
 pub(crate) fn set_platform_kernel_detection_enabled_for_tests(enabled: bool) {
     PLATFORM_KERNEL_DETECTION_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
-#[cfg(feature = "test-util")]
+#[cfg(any(test, feature = "test-util"))]
 #[allow(dead_code)]
 pub(crate) fn reset_platform_kernel_detection_for_tests() {
     PLATFORM_KERNEL_DETECTION_ENABLED.store(true, Ordering::Relaxed);
@@ -81,7 +81,9 @@ pub(crate) async fn collect_kernel_runtime_probe_with_process<R: tauri::Runtime>
     process: &dyn KernelProcessControl<R>,
     port: u16,
 ) -> KernelRuntimeProbe {
-    let process_running = is_kernel_running_with_process(process).await.unwrap_or(false);
+    let process_running = is_kernel_running_with_process(process)
+        .await
+        .unwrap_or(false);
     let mut probe = KernelRuntimeProbe {
         process_running,
         ..Default::default()

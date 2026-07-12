@@ -1,6 +1,8 @@
 use super::*;
 use crate::app::core::tun_profile::TunProxyOptions;
-use crate::app::singbox::config_generator::{generate_base_config, inject_custom_rules, strip_custom_rules};
+use crate::app::singbox::config_generator::{
+    generate_base_config, inject_custom_rules, strip_custom_rules,
+};
 use crate::app::storage::custom_rule::{CustomRule, CustomRuleAction, CustomRuleMatchType};
 use crate::app::storage::state_model::AppConfig;
 use chrono::Utc;
@@ -144,11 +146,15 @@ async fn clash_api_helpers_against_local_mock() {
     let proxies = get_proxies(port).await.unwrap();
     assert!(proxies.get("proxies").is_some());
 
-    change_proxy("GLOBAL".into(), "a".into(), port).await.unwrap();
+    change_proxy("GLOBAL".into(), "a".into(), port)
+        .await
+        .unwrap();
     close_all_connections(port).await.unwrap();
     close_connection("id1".into(), port).await.unwrap();
 
-    let delay = fetch_single_delay(port, "a", 1000, "http://example.com").await.unwrap();
+    let delay = fetch_single_delay(port, "a", 1000, "http://example.com")
+        .await
+        .unwrap();
     assert_eq!(delay, 42);
 
     let _ = server.abort();
@@ -400,7 +406,9 @@ async fn clash_api_http_errors() {
     let port = listener.local_addr().unwrap().port();
     let server = tokio::spawn(async move {
         for _ in 0..6 {
-            let Ok((mut sock, _)) = listener.accept().await else { break; };
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
             let mut buf = [0u8; 1024];
             let _ = sock.read(&mut buf).await;
             let resp = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -409,7 +417,9 @@ async fn clash_api_http_errors() {
     });
     assert!(get_proxies(port).await.is_err());
     assert!(change_proxy("G".into(), "n".into(), port).await.is_err());
-    assert!(fetch_single_delay(port, "n", 100, "http://x").await.is_err());
+    assert!(fetch_single_delay(port, "n", 100, "http://x")
+        .await
+        .is_err());
     let failed = measure_proxy_delay(port, "n".into(), 50, "http://x", 1).await;
     assert!(!failed.ok);
     let _ = server.abort();
@@ -428,7 +438,8 @@ async fn resolve_group_nodes_empty_list_errors() {
             let body = r#"{"proxies":{"G":{"all":[]}}}"#;
             let resp = format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(), body
+                body.len(),
+                body
             );
             let _ = sock.write_all(resp.as_bytes()).await;
         }
@@ -542,13 +553,19 @@ async fn custom_rules_crud_via_mock_app() {
     .await
     .is_err());
 
-    toggle_custom_rule(h.clone(), rule.id.clone()).await.unwrap();
+    toggle_custom_rule(h.clone(), rule.id.clone())
+        .await
+        .unwrap();
     let after_toggle = list_custom_rules(h.clone()).await.unwrap();
     assert!(!after_toggle[0].enabled);
 
-    assert!(toggle_custom_rule(h.clone(), "missing".into()).await.is_err());
+    assert!(toggle_custom_rule(h.clone(), "missing".into())
+        .await
+        .is_err());
 
-    delete_custom_rule(h.clone(), rule.id.clone()).await.unwrap();
+    delete_custom_rule(h.clone(), rule.id.clone())
+        .await
+        .unwrap();
     assert!(list_custom_rules(h.clone()).await.unwrap().is_empty());
     assert!(delete_custom_rule(h.clone(), rule.id).await.is_err());
 
@@ -641,9 +658,14 @@ async fn toggle_ip_version_and_delay_tests_with_mock() {
         }
     });
 
-    let one = test_node_delay(h.clone(), "n1".into(), Some("http://example.com".into()), port)
-        .await
-        .unwrap();
+    let one = test_node_delay(
+        h.clone(),
+        "n1".into(),
+        Some("http://example.com".into()),
+        port,
+    )
+    .await
+    .unwrap();
     assert!(one.ok);
     assert_eq!(one.delay, 33);
 

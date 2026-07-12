@@ -44,6 +44,17 @@
 
     <div class="setting-row">
       <div class="setting-info">
+        <div class="setting-label">{{ props.t('setting.autoStart.kernel') }}</div>
+        <div class="setting-desc">{{ props.t('setting.autoStart.kernelDesc') }}</div>
+      </div>
+      <n-switch
+        :value="props.autoStartKernel"
+        @update:value="props.onAutoStartKernelChange"
+      />
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
         <div class="setting-label">{{ props.t('setting.startup.closeBehavior') }}</div>
         <div class="setting-desc">{{ props.t('setting.startup.closeBehaviorDesc') }}</div>
       </div>
@@ -74,12 +85,14 @@ const props = defineProps<{
   t: (key: string, params?: Record<string, string | number>) => string
   localeStore: LocaleStoreLike
   autoStart: boolean
+  autoStartKernel: boolean
   autoHideToTrayOnAutostart: boolean
   trayCloseBehavior: TrayCloseBehavior
   languageOptions: Option<Locale>[]
   trayCloseBehaviorOptions: Option<TrayCloseBehavior>[]
   onChangeLanguage: (v: Locale) => void
   onAutoStartChange: (v: boolean) => void
+  onAutoStartKernelChange: (v: boolean) => void
   onAutoHideToTrayOnAutostartChange: (v: boolean) => void
   onTrayCloseBehaviorChange: (v: TrayCloseBehavior) => void
 }>()

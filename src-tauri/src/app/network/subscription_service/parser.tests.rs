@@ -129,7 +129,10 @@ fn parse_uri_list_tuic_with_options() {
     assert!(nodes[0]["zero_rtt_handshake"].as_bool().unwrap());
     assert_eq!(nodes[0]["heartbeat"].as_str().unwrap(), "10s");
     assert_eq!(nodes[0]["network"].as_str().unwrap(), "tcp");
-    assert_eq!(nodes[0]["tls"]["server_name"].as_str().unwrap(), "edge.example.com");
+    assert_eq!(
+        nodes[0]["tls"]["server_name"].as_str().unwrap(),
+        "edge.example.com"
+    );
     assert!(nodes[0]["tls"]["insecure"].as_bool().unwrap());
     assert_eq!(nodes[0]["tls"]["alpn"][0].as_str().unwrap(), "h3");
     assert_eq!(nodes[0]["tls"]["alpn"][1].as_str().unwrap(), "hq-29");
@@ -145,7 +148,10 @@ fn parse_uri_list_anytls_basic() {
     assert_eq!(nodes[0]["server"].as_str().unwrap(), "example.com");
     assert_eq!(nodes[0]["server_port"].as_u64().unwrap(), 443);
     assert_eq!(nodes[0]["password"].as_str().unwrap(), "secret");
-    assert_eq!(nodes[0]["tls"]["server_name"].as_str().unwrap(), "cdn.example.com");
+    assert_eq!(
+        nodes[0]["tls"]["server_name"].as_str().unwrap(),
+        "cdn.example.com"
+    );
 }
 
 #[test]
@@ -324,10 +330,7 @@ proxies:
 "#;
     let nodes = extract_nodes_from_subscription(yaml).expect("should parse");
     assert_eq!(nodes.len(), 4);
-    let types: Vec<&str> = nodes
-        .iter()
-        .map(|n| n["type"].as_str().unwrap())
-        .collect();
+    let types: Vec<&str> = nodes.iter().map(|n| n["type"].as_str().unwrap()).collect();
     assert!(types.contains(&"vmess"));
     assert!(types.contains(&"hysteria2"));
     assert!(types.contains(&"tuic"));
@@ -401,7 +404,6 @@ proxies:
     assert!(nodes.len() >= 2);
 }
 
-
 #[test]
 fn parse_vmess_uri_and_ss_base64_userinfo() {
     use base64::{engine::general_purpose, Engine as _};
@@ -459,7 +461,9 @@ proxies:
     let nodes = extract_nodes_from_subscription(yaml).expect("yaml");
     assert!(nodes.len() >= 2);
     let types: Vec<_> = nodes.iter().filter_map(|n| n["type"].as_str()).collect();
-    assert!(types.iter().any(|t| *t == "vless" || *t == "trojan" || *t == "anytls"));
+    assert!(types
+        .iter()
+        .any(|t| *t == "vless" || *t == "trojan" || *t == "anytls"));
 }
 
 #[test]
@@ -525,7 +529,10 @@ fn parse_anytls_default_tag_servername_alias() {
     let content = "anytls://secret@any.example.com:8443?servername=cdn.example.com&insecure=off";
     let nodes = extract_nodes_from_subscription(content).expect("anytls");
     assert_eq!(nodes.len(), 1);
-    assert!(nodes[0]["tag"].as_str().unwrap().contains("any.example.com"));
+    assert!(nodes[0]["tag"]
+        .as_str()
+        .unwrap()
+        .contains("any.example.com"));
     assert_eq!(nodes[0]["tls"]["server_name"], "cdn.example.com");
     assert!(!nodes[0]["tls"]["insecure"].as_bool().unwrap());
 }
@@ -533,7 +540,8 @@ fn parse_anytls_default_tag_servername_alias() {
 #[test]
 fn parse_ss_full_base64_payload_and_url_safe() {
     // 情况 B：整体 base64(method:password@host:port)
-    let payload = general_purpose::STANDARD.encode(b"chacha20-ietf-poly1305:pw@ss.example.com:8388");
+    let payload =
+        general_purpose::STANDARD.encode(b"chacha20-ietf-poly1305:pw@ss.example.com:8388");
     let uri = format!("ss://{}#full-b64", payload);
     let nodes = extract_nodes_from_subscription(&uri).expect("ss full b64");
     assert_eq!(nodes.len(), 1);
@@ -561,7 +569,9 @@ fn parse_vmess_numeric_port_aid_and_no_tls() {
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0]["server_port"].as_u64().unwrap(), 8443);
     assert_eq!(nodes[0]["alter_id"].as_u64().unwrap(), 2);
-    assert!(nodes[0].get("tls").is_none() || !nodes[0]["tls"]["enabled"].as_bool().unwrap_or(false));
+    assert!(
+        nodes[0].get("tls").is_none() || !nodes[0]["tls"]["enabled"].as_bool().unwrap_or(false)
+    );
     // 空 ps → 默认 tag
     assert!(nodes[0]["tag"].as_str().unwrap().contains("9.9.9.9"));
 }
@@ -602,8 +612,10 @@ fn parse_singbox_outbounds_without_tag_and_recursive_selector() {
     // 顶级有 supported 节点（vmess 无 tag 会补 tag 并入选）
     let nodes2 = extract_nodes_from_subscription(json2).expect("json2");
     assert!(nodes2.iter().any(|n| n["type"] == "vmess"));
-    assert!(nodes2[0]["tag"].as_str().unwrap().contains("vmess")
-        || !nodes2[0]["tag"].as_str().unwrap().is_empty());
+    assert!(
+        nodes2[0]["tag"].as_str().unwrap().contains("vmess")
+            || !nodes2[0]["tag"].as_str().unwrap().is_empty()
+    );
 }
 
 #[test]
@@ -682,7 +694,10 @@ proxies:
     assert_eq!(any["idle_session_check_interval"], "30s");
     assert_eq!(any["idle_session_timeout"], "60s");
 
-    let tu = nodes.iter().find(|n| n["tag"] == "tuic-flags").expect("tuic");
+    let tu = nodes
+        .iter()
+        .find(|n| n["tag"] == "tuic-flags")
+        .expect("tuic");
     assert_eq!(tu["reduce_rtt"], true);
     assert_eq!(tu["tls"]["disable_sni"], true);
 }

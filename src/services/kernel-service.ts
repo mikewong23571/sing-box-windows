@@ -24,6 +24,20 @@ export interface KernelStatus {
   version?: string
   error?: string
   kernel_state?: 'stopped' | 'starting' | 'running' | 'stopping' | 'failed' | 'crashed'
+  desired_state?: 'running' | 'stopped'
+  observed_state?:
+    | 'stopped'
+    | 'starting'
+    | 'running'
+    | 'degraded'
+    | 'stopping'
+    | 'failed'
+    | 'crashed'
+  operation_meta?: {
+    op_id: string
+    operation: string
+    state_version: number
+  } | null
   state_version?: number
   op_id?: string
   operation?: string
@@ -73,21 +87,11 @@ export interface KernelStartOptions {
   config?: Partial<KernelStartConfig>
   forceRestart?: boolean
   timeoutMs?: number
-  keepAlive?: boolean
 }
 
 export interface KernelStopOptions {
   force?: boolean
   timeoutMs?: number
-}
-
-export interface KernelAutoManageResult {
-  state: 'missing_kernel' | 'missing_config' | 'invalid_config' | 'running' | 'error'
-  message: string
-  kernel_installed: boolean
-  config_ready: boolean
-  attempted_start: boolean
-  last_start_message?: string
 }
 
 export interface KernelDownloadPayload {
@@ -118,10 +122,6 @@ class KernelService {
 
     if (typeof options.config?.tun_enabled === 'boolean') {
       args.tun_enabled = options.config.tun_enabled
-    }
-
-    if (options.keepAlive !== undefined) {
-      args.keep_alive = options.keepAlive
     }
 
     return args
@@ -333,36 +333,6 @@ class KernelService {
         message: error instanceof Error ? error.message : '切换IP版本失败',
       }
     }
-  }
-
-  autoManageKernel(
-    options: KernelStartOptions & { forceRestart?: boolean } = {},
-  ): Promise<KernelAutoManageResult> {
-    return withAppStore(async (store) => {
-      await store.waitForDataRestore()
-
-      // 仅传递覆盖参数
-      const args: Record<string, unknown> = {}
-
-      if (options.forceRestart !== undefined) {
-        args.force_restart = options.forceRestart
-      }
-
-      if (options.config) {
-        if (typeof options.config.system_proxy_enabled === 'boolean') {
-          args.system_proxy_enabled = options.config.system_proxy_enabled
-        }
-        if (typeof options.config.tun_enabled === 'boolean') {
-          args.tun_enabled = options.config.tun_enabled
-        }
-      }
-
-      return invokeWithAppContext<KernelAutoManageResult>(
-        'kernel_auto_manage',
-        Object.keys(args).length > 0 ? args : undefined,
-        { skipDataRestore: true },
-      )
-    })
   }
 
   /**

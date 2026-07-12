@@ -114,9 +114,7 @@ pub(crate) async fn fetch_kernel_releases_from_urls(
                 if response.status().is_success() {
                     let releases: Vec<GitHubRelease> = response.json().await?;
                     let versions = filter_stable_release_tags(
-                        releases
-                            .into_iter()
-                            .map(|r| (r.tag_name, r.prerelease)),
+                        releases.into_iter().map(|r| (r.tag_name, r.prerelease)),
                     );
 
                     info!(
@@ -241,10 +239,7 @@ pub(crate) async fn check_config_with_kernel(
         return Err(messages::ERR_KERNEL_NOT_FOUND.to_string());
     }
     if !config_path.exists() {
-        return Err(format!(
-            "配置文件不存在: {}",
-            config_path.to_string_lossy()
-        ));
+        return Err(format!("配置文件不存在: {}", config_path.to_string_lossy()));
     }
 
     let mut cmd = tokio::process::Command::new(kernel_path);
@@ -306,7 +301,8 @@ pub async fn check_kernel_version_impl<R: Runtime>(
     let kernel_path = paths::get_kernel_path();
 
     if !kernel_path.exists() {
-        let _ = crate::app::core::kernel_service::embedded::ensure_embedded_kernel(app_handle).await;
+        let _ =
+            crate::app::core::kernel_service::embedded::ensure_embedded_kernel(app_handle).await;
     }
 
     let version = read_kernel_version_from_binary(&kernel_path).await?;

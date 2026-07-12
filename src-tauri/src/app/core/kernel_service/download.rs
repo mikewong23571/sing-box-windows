@@ -3,9 +3,9 @@ use crate::app::core::kernel_service::status::{is_kernel_running, is_kernel_runn
 use crate::app::core::kernel_service::versioning::{get_latest_kernel_version, get_system_arch};
 use crate::app::core::kernel_service::KernelProcessControl;
 use crate::app::core::kernel_service::PROCESS_MANAGER;
-use crate::app::kernel_service::stop_kernel;
-use crate::app::runtime::change::{RuntimeApplyOptions, RuntimeChange};
-use crate::app::runtime::orchestrator::apply_runtime_change;
+use crate::app::core::kernel_service::{
+    orchestrated_resume_after_maintenance, orchestrated_suspend_for_maintenance,
+};
 use serde_json::json;
 use std::path::Path;
 use std::time::Duration;
@@ -166,9 +166,7 @@ pub async fn download_kernel(app_handle: AppHandle, version: Option<String>) -> 
 
     info!("检测到平台: {}, 架构: {}", platform, arch);
 
-    let latest = get_latest_kernel_version()
-        .await
-        .map_err(|e| e.to_string());
+    let latest = get_latest_kernel_version().await.map_err(|e| e.to_string());
     if let Ok(ref v) = latest {
         info!("获取到最新版本号: {}", v);
     } else if let Err(ref e) = latest {
@@ -269,30 +267,20 @@ pub async fn download_kernel(app_handle: AppHandle, version: Option<String>) -> 
 
     let was_running_before_update = is_kernel_running().await.unwrap_or(false);
     if was_running_before_update {
-        info!("内核更新前检测到正在运行，先尝试停止以便替换");
-
-        // 尝试多次停止内核
-        for i in 0..5 {
-            let _ = stop_kernel(Some(&app_handle)).await; // stop_kernel 内部已有 guard disable 和 2s 等待
-
-            if !is_kernel_running().await.unwrap_or(true) {
-                info!("内核已成功停止");
-                break;
-            }
-            warn!("停止内核尝试 {} 失败，等待重试...", i + 1);
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
-
-        // 最后再次确认
-        if is_kernel_running().await.unwrap_or(false) {
-            warn!("几次尝试后内核仍在运行，尝试强制终止进程...");
-            if let Err(e) = PROCESS_MANAGER
-                .kill_existing_processes(Some(&app_handle))
-                .await
-            {
-                warn!("强制终止内核进程失败: {}", e);
-            }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+        info!("内核更新前检测到正在运行，通过协调器暂停以便替换");
+        let result =
+            orchestrated_suspend_for_maintenance(app_handle.clone(), "kernel-update".to_string())
+                .await?;
+        if !result
+            .get("success")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+        {
+            return Err(result
+                .get("message")
+                .and_then(|value| value.as_str())
+                .unwrap_or("内核更新前停止失败")
+                .to_string());
         }
     }
 
@@ -324,12 +312,12 @@ pub async fn download_kernel(app_handle: AppHandle, version: Option<String>) -> 
     );
 
     if was_running_before_update {
-        info!("内核更新完成，自动重新启动内核");
-        let options = RuntimeApplyOptions::new("kernel-update").force_restart(true);
+        info!("内核更新完成，按维护前的用户期望恢复内核");
         if let Err(error) =
-            apply_runtime_change(&app_handle, RuntimeChange::KernelUpdated, options).await
+            orchestrated_resume_after_maintenance(app_handle.clone(), "kernel-update".to_string())
+                .await
         {
-            warn!("内核更新后自动重启失败: {}", error);
+            warn!("内核更新后恢复失败: {}", error);
         }
     }
 
@@ -390,10 +378,7 @@ pub(crate) fn all_download_sources_failed_message(last_source_name: &str) -> Str
 }
 
 /// 按镜像列表依次下载到 path；成功返回 Ok(index)，全失败返回 Err。
-pub(crate) async fn try_download_from_urls(
-    urls: &[String],
-    path: &Path,
-) -> Result<usize, String> {
+pub(crate) async fn try_download_from_urls(urls: &[String], path: &Path) -> Result<usize, String> {
     if urls.is_empty() {
         return Err("下载源列表为空".to_string());
     }
@@ -410,9 +395,11 @@ pub(crate) async fn try_download_from_urls(
             }
         }
     }
-    Err(all_download_sources_failed_message(
-        kernel_download_source_name(urls.len().saturating_sub(1)),
-    ) + &format!(" ({})", last_err))
+    Err(
+        all_download_sources_failed_message(kernel_download_source_name(
+            urls.len().saturating_sub(1),
+        )) + &format!(" ({})", last_err),
+    )
 }
 
 /// 无窗口下载+解压部署流水线（hermetic：可注入 URL，不依赖 WebviewWindow）。
@@ -483,7 +470,9 @@ pub(crate) fn apply_installed_kernel_version(
 /// 无窗口：可选停核后从本地归档安装内核（hermetic，process 可注入）。
 /// `was_running` 仅用于决定返回后是否需要调用方重启；本函数不重启。
 #[allow(dead_code)]
-pub(crate) async fn install_local_kernel_archive_with_optional_stop_with_process<R: tauri::Runtime>(
+pub(crate) async fn install_local_kernel_archive_with_optional_stop_with_process<
+    R: tauri::Runtime,
+>(
     process: &dyn KernelProcessControl<R>,
     app_handle: &tauri::AppHandle<R>,
     archive_path: &Path,
@@ -500,11 +489,15 @@ pub(crate) async fn install_local_kernel_archive_with_optional_stop_with_process
         .await
         .map_err(|e| format!("复制归档失败: {}", e))?;
 
-    let was_running = is_kernel_running_with_process(process).await.unwrap_or(false);
+    let was_running = is_kernel_running_with_process(process)
+        .await
+        .unwrap_or(false);
     if should_stop_kernel_before_replace(was_running) {
         for i in 0..KERNEL_REPLACE_STOP_ATTEMPTS {
             let _ = stop_kernel_with_process(process, Some(app_handle)).await;
-            let still = is_kernel_running_with_process(process).await.unwrap_or(true);
+            let still = is_kernel_running_with_process(process)
+                .await
+                .unwrap_or(true);
             if kernel_stop_retry_succeeded(still) {
                 break;
             }
@@ -514,14 +507,17 @@ pub(crate) async fn install_local_kernel_archive_with_optional_stop_with_process
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         if should_force_kill_after_stop_retries(
-            is_kernel_running_with_process(process).await.unwrap_or(false),
+            is_kernel_running_with_process(process)
+                .await
+                .unwrap_or(false),
         ) {
             let _ = process.kill_existing_processes(Some(app_handle)).await;
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 
-    let target = install_kernel_from_archive(&staged_download, &temp_update_dir, &kernel_dir).await?;
+    let target =
+        install_kernel_from_archive(&staged_download, &temp_update_dir, &kernel_dir).await?;
     Ok((target, was_running))
 }
 

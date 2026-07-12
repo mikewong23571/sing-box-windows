@@ -2,10 +2,11 @@ use super::{
     active_config_change_requires_restart, add_manual_subscription_core,
     apply_userinfo_to_subscriptions, build_subscription_persist_result, delete_subscription_config,
     download_subscription_core, extract_nodes_from_subscription, extract_subscription_userinfo,
-    fetch_subscription_content, fetch_subscription_content_with_user_agent, get_current_config_impl,
-    merge_subscription_fetch_result, normalized_active_config_path, parse_subscription_userinfo,
-    persist_downloaded_subscription_content, persist_manual_subscription_content,
-    read_config_file_content, resolve_current_config_file_path, rollback_subscription_config,
+    fetch_subscription_content, fetch_subscription_content_with_user_agent,
+    get_current_config_impl, merge_subscription_fetch_result, normalized_active_config_path,
+    parse_subscription_userinfo, persist_downloaded_subscription_content,
+    persist_manual_subscription_content, read_config_file_content,
+    resolve_current_config_file_path, rollback_subscription_config,
     set_active_config_path_internal, should_retry_subscription_userinfo, try_decode_base64_to_text,
     update_subscription_userinfo, SubscriptionFetchResult, SubscriptionUserInfo,
 };
@@ -421,14 +422,9 @@ async fn update_subscription_userinfo_with_mock_storage() {
         total: Some(30),
         expire: Some(40),
     };
-    update_subscription_userinfo(
-        &env.handle(),
-        &path,
-        "http://example.com/sub",
-        Some(info),
-    )
-    .await
-    .unwrap();
+    update_subscription_userinfo(&env.handle(), &path, "http://example.com/sub", Some(info))
+        .await
+        .unwrap();
 
     let loaded = storage.get_subscriptions().await.unwrap();
     assert_eq!(loaded[0].subscription_upload, Some(10));
@@ -467,12 +463,10 @@ async fn set_active_config_path_internal_and_delete_rollback() {
     cfg.active_config_path = Some(a.to_string_lossy().to_string());
     storage.save_app_config(&cfg).await.unwrap();
 
-    let (cfg2, restart) = set_active_config_path_internal(
-        &env.handle(),
-        Some(b.to_string_lossy().to_string()),
-    )
-    .await
-    .unwrap();
+    let (cfg2, restart) =
+        set_active_config_path_internal(&env.handle(), Some(b.to_string_lossy().to_string()))
+            .await
+            .unwrap();
     assert!(restart);
     assert_eq!(
         cfg2.active_config_path.as_deref(),
@@ -480,12 +474,10 @@ async fn set_active_config_path_internal_and_delete_rollback() {
     );
 
     // same path → no restart
-    let (_cfg3, restart2) = set_active_config_path_internal(
-        &env.handle(),
-        Some(b.to_string_lossy().to_string()),
-    )
-    .await
-    .unwrap();
+    let (_cfg3, restart2) =
+        set_active_config_path_internal(&env.handle(), Some(b.to_string_lossy().to_string()))
+            .await
+            .unwrap();
     assert!(!restart2);
 
     rollback_subscription_config(b.to_string_lossy().to_string()).unwrap();
@@ -508,11 +500,11 @@ fn resolve_current_config_and_persist_result_helpers() {
         total: Some(3),
         expire: Some(4),
     };
-    let r = build_subscription_persist_result(std::path::Path::new("/x/c.json"), Some(&info));
+    let r = build_subscription_persist_result(std::path::Path::new("/x/c.json"), Some(&info), true);
     assert_eq!(r.config_path, "/x/c.json");
     assert_eq!(r.subscription_upload, Some(1));
     assert_eq!(r.subscription_total, Some(3));
-    let r2 = build_subscription_persist_result(std::path::Path::new("/y.json"), None);
+    let r2 = build_subscription_persist_result(std::path::Path::new("/y.json"), None, false);
     assert!(r2.subscription_upload.is_none());
 }
 
@@ -569,7 +561,13 @@ async fn get_current_config_with_mock_storage() {
     assert!(content.contains("hello"));
 
     // 缺文件
-    cfg.active_config_path = Some(env.workspace.path().join("missing.json").to_string_lossy().to_string());
+    cfg.active_config_path = Some(
+        env.workspace
+            .path()
+            .join("missing.json")
+            .to_string_lossy()
+            .to_string(),
+    );
     storage.save_app_config(&cfg).await.unwrap();
     assert!(get_current_config_impl(env.handle()).await.is_err());
 }
@@ -657,10 +655,7 @@ async fn download_subscription_core_local_http_without_runtime_apply() {
         }
     });
 
-    let target = env
-        .workspace
-        .path()
-        .join("sing-box/configs/from_core.json");
+    let target = env.workspace.path().join("sing-box/configs/from_core.json");
     let result = download_subscription_core(
         &env.handle(),
         format!("http://127.0.0.1:{}/s", port),
@@ -712,10 +707,7 @@ async fn download_subscription_core_with_runtime_apply_and_generated() {
         }
     });
 
-    let target = env
-        .workspace
-        .path()
-        .join("sing-box/configs/generated.json");
+    let target = env.workspace.path().join("sing-box/configs/generated.json");
     // use_original_config=true：跳过节点提取，仍走 inject 跳过 + apply_runtime 全路径
     let result = download_subscription_core(
         &env.handle(),
@@ -765,10 +757,7 @@ async fn add_manual_subscription_core_with_and_without_runtime() {
     .expect("manual no runtime");
     assert!(std::path::Path::new(&no_rt.config_path).exists());
 
-    let target2 = env
-        .workspace
-        .path()
-        .join("sing-box/configs/manual_rt.json");
+    let target2 = env.workspace.path().join("sing-box/configs/manual_rt.json");
     // 原始 JSON 配置路径（use_original=true）以覆盖 apply_runtime 分支
     let with_rt = add_manual_subscription_core(
         &env.handle(),

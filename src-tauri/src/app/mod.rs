@@ -11,7 +11,6 @@ pub mod singbox;
 // Core services
 pub mod core {
     pub mod event_relay;
-    pub mod kernel_auto_manage;
     pub mod kernel_service;
     pub mod proxy_service;
     pub mod tun_profile;
@@ -42,7 +41,6 @@ pub mod tray;
 mod architecture_tests;
 
 // Re-exports for backward compatibility
-pub use core::kernel_auto_manage;
 pub use core::kernel_service;
 pub use core::proxy_service;
 pub use network::subscription_service;

@@ -63,12 +63,12 @@ pub fn process_controller() -> Arc<dyn KernelProcessControl<tauri::Wry>> {
     controller.clone()
 }
 
-#[cfg(feature = "test-util")]
+#[cfg(any(test, feature = "test-util"))]
 pub fn set_process_controller_for_test(controller: Arc<dyn KernelProcessControl<tauri::Wry>>) {
     *PROCESS_CONTROLLER.write().unwrap() = Some(controller);
 }
 
-#[cfg(feature = "test-util")]
+#[cfg(any(test, feature = "test-util"))]
 pub fn reset_process_controller_for_test() {
     *PROCESS_CONTROLLER.write().unwrap() = None;
 }
@@ -94,11 +94,17 @@ pub use import::{import_kernel_executable, pick_kernel_import_file};
 pub use orchestrator::current_state_version;
 pub use runtime::{
     apply_proxy_settings, kernel_restart_fast, kernel_start_enhanced, kernel_stop_enhanced,
-    orchestrated_restart_kernel, orchestrated_start_kernel, orchestrated_stop_kernel,
+    orchestrated_apply_change, orchestrated_apply_change_with_deps, orchestrated_restart_kernel,
+    orchestrated_resume_after_maintenance, orchestrated_start_kernel,
+    orchestrated_startup_reconcile, orchestrated_stop_kernel, orchestrated_suspend_for_maintenance,
     resolve_proxy_runtime_state, start_kernel_with_state, stop_kernel, ProxyOverrides,
     ResolvedProxyState,
 };
-pub use state::{KernelRuntimeConfig, KernelState, KernelStateManager, KERNEL_STATE};
+pub use state::{
+    KernelAction, KernelChangeImpact, KernelDesiredState, KernelLifecycleSnapshot,
+    KernelObservedState, KernelOperationMeta, KernelRequestKind, KernelState, KernelStateManager,
+    KERNEL_STATE,
+};
 pub use status::{
     get_system_uptime, is_kernel_running, kernel_check_health, kernel_get_snapshot,
     kernel_get_status_enhanced,
