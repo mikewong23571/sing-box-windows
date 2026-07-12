@@ -304,6 +304,7 @@ export default {
     directConnect: 'ローカル直接接続',
     blockAction: 'ブロック',
     noRulesData: 'ルールデータがありません',
+    kernelNotRunning: '実行時ルールを表示するにはコアを起動してください',
     adjustSearchOrFilters: '検索条件やフィルター条件を調整してください',
     clickRefreshToGetRules: '更新ボタンをクリックしてルールデータを取得してください',
     getRules: 'ルールを取得',

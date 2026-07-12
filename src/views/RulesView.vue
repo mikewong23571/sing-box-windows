@@ -8,7 +8,13 @@
             {{ t('common.refresh') }}
           </n-button>
 
-          <n-button v-if="activeTab === 'providers'" type="primary" secondary :loading="bulkUpdating" @click="updateAllProviders">
+          <n-button
+            v-if="activeTab === 'providers' && isKernelRunning"
+            type="primary"
+            secondary
+            :loading="bulkUpdating"
+            @click="updateAllProviders"
+          >
             {{ t('rules.updateAll') }}
           </n-button>
 
@@ -40,7 +46,16 @@
       </n-grid>
     </n-card>
 
-    <n-flex v-if="activeTab === 'rules'" vertical style="margin-top: 24px;" class="card-list">
+    <n-empty
+      v-if="activeTab !== 'custom' && !isKernelRunning"
+      size="huge"
+      :description="t('rules.kernelNotRunning')"
+      style="margin-top: 48px;"
+    >
+      <template #icon><n-icon><FilterOutline /></n-icon></template>
+    </n-empty>
+
+    <n-flex v-else-if="activeTab === 'rules'" vertical style="margin-top: 24px;" class="card-list">
       <n-list v-if="filteredRules.length" hoverable class="rules-list" :show-divider="true">
         <n-list-item v-for="rule in filteredRules" :key="rule.index" style="padding: 12px 16px;">
           <n-flex justify="space-between" align="center" :wrap="false">
@@ -195,10 +210,12 @@
 </template>
 
 <script setup lang="ts">
+import { storeToRefs } from 'pinia'
 import { computed, reactive, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { AddOutline, FilterOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { useKernelStore } from '@/stores/kernel/KernelStore'
 import { useRulesStore } from '@/stores/kernel/RulesStore'
 import { useI18n } from 'vue-i18n'
 import type { RuleItem } from '@/types/controller'
@@ -214,7 +231,9 @@ defineOptions({
 
 const { t } = useI18n()
 const message = useMessage()
+const kernelStore = useKernelStore()
 const rulesStore = useRulesStore()
+const { isRunning: isKernelRunning } = storeToRefs(kernelStore)
 const activeTab = ref<'rules' | 'providers' | 'custom'>('rules')
 const searchQuery = ref('')
 const typeFilter = ref<string | null>(null)
@@ -293,6 +312,11 @@ const bulkUpdating = computed(() =>
 
 const refreshAll = async () => {
   try {
+    if (!isKernelRunning.value) {
+      await rulesStore.fetchCustomRules()
+      return
+    }
+
     await rulesStore.fetchAll()
     message.success(t('rules.fetchSuccess', { count: rulesStore.rules.length }))
   } catch (error) {

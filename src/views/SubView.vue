@@ -932,6 +932,10 @@ onUnmounted(() => {
   box-shadow: 0 2px 10px -6px rgba(15, 23, 42, 0.18);
   height: 100%;
   box-sizing: border-box;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
 }
 
 .sub-card:hover {
@@ -982,8 +986,8 @@ onUnmounted(() => {
 }
 
 .sub-name {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 700;
   color: var(--text-primary);
   line-height: 1.3;
 }
@@ -1001,7 +1005,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   padding: 2px 8px;
   border-radius: 20px;
   line-height: 1.6;
@@ -1054,13 +1058,13 @@ onUnmounted(() => {
 .traffic-label {
   font-size: 12px;
   color: var(--text-tertiary);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .traffic-value {
   font-size: 12px;
   color: var(--text-secondary);
-  font-weight: 600;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1105,8 +1109,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--text-secondary);
+  font-weight: 500;
+  line-height: 1.45;
   min-width: 0;
 }
 
@@ -1127,9 +1133,11 @@ onUnmounted(() => {
 }
 
 .url-text {
-  font-family: monospace;
-  font-size: 11.5px;
-  color: var(--text-tertiary);
+  font-family: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', Consolas, monospace;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--text-secondary);
 }
 
 /* ── Action Button ─────────────────────────────────────── */

@@ -291,6 +291,7 @@ export default {
     directConnect: '本地直连',
     blockAction: '拦截',
     noRulesData: '暂无规则数据',
+    kernelNotRunning: '内核未运行，无法查看运行时规则',
     adjustSearchOrFilters: '请尝试调整搜索条件或筛选条件',
     clickRefreshToGetRules: '点击刷新按钮获取规则数据',
     getRules: '获取规则',
